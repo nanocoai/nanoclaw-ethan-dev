@@ -95,6 +95,91 @@ export function seedPiAgentConfig(
   }
 }
 
+// ── Group-context flattening ──
+
+/** Max @-include recursion depth (mirrors Claude Code's own import hop cap). */
+const MAX_INCLUDE_DEPTH = 5;
+
+/**
+ * Recursively expand Claude-style `@path` include lines in a context file.
+ *
+ * The host composes `groups/<folder>/CLAUDE.md` as a pure @-include index
+ * (`@./.claude-shared.md`, `@./.claude-fragments/module-*.md`, …). Claude
+ * Code expands those natively; pi discovers CLAUDE.md as a context file but
+ * treats it as LITERAL text — the agent would see a list of paths instead of
+ * the destination docs and module guidance behind them (observed live:
+ * invented reply destinations). So the provider flattens the index itself.
+ *
+ * Only whole-line references (`@./relative` or `@/absolute`, alone on the
+ * line) are expanded — exactly what the composer emits. Relative paths
+ * resolve against the including file's directory; symlinked entries (the
+ * composer's normal case — fragments link to /app/... mounts) are followed
+ * by realpath/readFile. Cycles are broken via a visited set on resolved
+ * paths; missing files are tolerated with a logged placeholder comment.
+ */
+export function expandClaudeMdIncludes(filePath: string, visited: Set<string> = new Set(), depth = 0): string {
+  let resolved = path.resolve(filePath);
+  try {
+    resolved = fs.realpathSync(resolved);
+  } catch {
+    /* keep the lexical resolution; the read below reports the failure */
+  }
+  if (visited.has(resolved)) {
+    log(`context include cycle at ${filePath}; skipping repeat`);
+    return '';
+  }
+  visited.add(resolved);
+
+  let content: string;
+  try {
+    content = fs.readFileSync(resolved, 'utf-8');
+  } catch (err) {
+    log(`context include unreadable: ${filePath} (${err instanceof Error ? err.message : String(err)})`);
+    return `<!-- include not found: ${filePath} -->`;
+  }
+
+  return content
+    .split('\n')
+    .map((line) => {
+      const m = line.trim().match(/^@(\S+)$/);
+      if (!m) return line;
+      if (depth >= MAX_INCLUDE_DEPTH) {
+        log(`context include depth cap (${MAX_INCLUDE_DEPTH}) hit at ${m[1]}; leaving reference as-is`);
+        return line;
+      }
+      const target = path.isAbsolute(m[1]) ? m[1] : path.resolve(path.dirname(resolved), m[1]);
+      return expandClaudeMdIncludes(target, visited, depth + 1);
+    })
+    .join('\n');
+}
+
+/**
+ * Build the flattened group context pi receives via --append-system-prompt:
+ * the fully-expanded composed CLAUDE.md plus CLAUDE.local.md (the group's
+ * identity seed / per-group notes — Claude Code auto-loads it, but pi's
+ * context-file discovery only knows AGENTS.md/CLAUDE.md, dist
+ * core/resource-loader.js, so it must be inlined here too). Returns '' when
+ * the group has neither; the caller then omits the flag entirely.
+ */
+export function buildPiGroupContext(cwd: string): string {
+  const parts: string[] = [];
+  const claudeMd = path.join(cwd, 'CLAUDE.md');
+  if (fs.existsSync(claudeMd)) {
+    const flattened = expandClaudeMdIncludes(claudeMd).trim();
+    if (flattened) parts.push(flattened);
+  }
+  const localMd = path.join(cwd, 'CLAUDE.local.md');
+  if (fs.existsSync(localMd)) {
+    try {
+      const local = fs.readFileSync(localMd, 'utf-8').trim();
+      if (local) parts.push(local);
+    } catch (err) {
+      log(`failed to read CLAUDE.local.md: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return parts.join('\n\n');
+}
+
 /**
  * pi's own session-id constraint (verified in the dist: `main.js` validates
  * ids against this exact pattern). `crypto.randomUUID()` satisfies it.
@@ -135,6 +220,7 @@ function buildPiArgs(
   sessionDir: string,
   model: string | undefined,
   instructions: string | undefined,
+  groupContext: string | undefined,
 ): string[] {
   const args = [
     '--mode',
@@ -144,8 +230,14 @@ function buildPiArgs(
     '--session-dir',
     sessionDir,
     '--no-extensions',
+    // The provider inlines the flattened group context itself (see
+    // buildPiGroupContext); without this flag pi would ALSO load the raw
+    // unexpanded CLAUDE.md index as a context file and double-feed it.
+    '--no-context-files',
     ...buildModelArgs(model),
   ];
+  // --append-system-prompt is repeatable (pi collects it into an array).
+  if (groupContext) args.push('--append-system-prompt', groupContext);
   if (instructions) args.push('--append-system-prompt', instructions);
   return args;
 }
@@ -382,8 +474,13 @@ export class PiProvider implements AgentProvider {
     // auth.json exists in the persistent per-group dir.
     seedPiAgentConfig();
 
+    // Flatten the group's composed CLAUDE.md (+ CLAUDE.local.md) — pi does
+    // not expand Claude's @-includes, so it gets the content pre-expanded
+    // via --append-system-prompt and context-file discovery stays disabled.
+    const groupContext = buildPiGroupContext(input.cwd);
+
     const sessionId = isValidSessionId(input.continuation) ? input.continuation : this.runtime.generateSessionId();
-    const args = buildPiArgs(sessionId, piSessionDir(), this.model, input.systemContext?.instructions);
+    const args = buildPiArgs(sessionId, piSessionDir(), this.model, input.systemContext?.instructions, groupContext);
     const child = this.runtime.spawn('pi', args, {
       cwd: input.cwd,
       env: mergeEnv(process.env, this.env),

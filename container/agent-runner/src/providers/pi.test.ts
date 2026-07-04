@@ -7,7 +7,9 @@ import path from 'path';
 import {
   PiProvider,
   buildModelArgs,
+  buildPiGroupContext,
   createJsonlReader,
+  expandClaudeMdIncludes,
   newTranslateState,
   seedPiAgentConfig,
   translatePiEvent,
@@ -151,6 +153,91 @@ describe('seedPiAgentConfig', () => {
   it('skips when the seed dir is missing or unreadable', () => {
     seedPiAgentConfig(home, path.join(root, 'no-such-seed'));
     expect(fs.existsSync(path.join(home, '.pi'))).toBe(false);
+  });
+});
+
+// ── Group-context flattening ──
+
+describe('group-context flattening', () => {
+  let groupDir: string;
+
+  beforeEach(() => {
+    groupDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ctx-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  });
+
+  /** A fixture shaped like the host composer's output: index + fragments. */
+  function writeComposedGroup(): void {
+    fs.mkdirSync(path.join(groupDir, '.claude-fragments'), { recursive: true });
+    fs.writeFileSync(
+      path.join(groupDir, 'CLAUDE.md'),
+      [
+        '<!-- Composed at spawn — do not edit. -->',
+        '@./.claude-shared.md',
+        '@./.claude-fragments/module-chat.md',
+        '',
+      ].join('\n'),
+    );
+    fs.writeFileSync(path.join(groupDir, '.claude-shared.md'), '# Shared Base\n\nValid destinations: telegram:12345, whatsapp:678.\n');
+    fs.writeFileSync(path.join(groupDir, '.claude-fragments', 'module-chat.md'), '# Module: chat\n\nAlways reply to the incoming destination header verbatim.\n');
+  }
+
+  it('produces fragment CONTENT, not @-paths, for a composed group with includes', () => {
+    writeComposedGroup();
+
+    const flattened = expandClaudeMdIncludes(path.join(groupDir, 'CLAUDE.md'));
+
+    expect(flattened).toContain('Valid destinations: telegram:12345, whatsapp:678.');
+    expect(flattened).toContain('Always reply to the incoming destination header verbatim.');
+    expect(flattened).not.toContain('@./.claude-shared.md');
+    expect(flattened).not.toContain('@./.claude-fragments/module-chat.md');
+  });
+
+  it('follows symlinked includes (fragments link to shared mounts)', () => {
+    const sharedSource = path.join(groupDir, 'shared-source.md');
+    fs.writeFileSync(sharedSource, 'linked shared content\n');
+    fs.symlinkSync(sharedSource, path.join(groupDir, '.claude-shared.md'));
+    fs.writeFileSync(path.join(groupDir, 'CLAUDE.md'), '@./.claude-shared.md\n');
+
+    expect(expandClaudeMdIncludes(path.join(groupDir, 'CLAUDE.md'))).toContain('linked shared content');
+  });
+
+  it('tolerates a missing include with a placeholder, keeping the rest', () => {
+    fs.writeFileSync(path.join(groupDir, 'CLAUDE.md'), ['@./missing.md', 'still here'].join('\n'));
+
+    const flattened = expandClaudeMdIncludes(path.join(groupDir, 'CLAUDE.md'));
+
+    expect(flattened).toContain('<!-- include not found:');
+    expect(flattened).toContain('still here');
+  });
+
+  it('breaks include cycles without recursing forever', () => {
+    fs.writeFileSync(path.join(groupDir, 'a.md'), ['from-a', '@./b.md'].join('\n'));
+    fs.writeFileSync(path.join(groupDir, 'b.md'), ['from-b', '@./a.md'].join('\n'));
+
+    const flattened = expandClaudeMdIncludes(path.join(groupDir, 'a.md'));
+
+    expect(flattened).toContain('from-a');
+    expect(flattened).toContain('from-b');
+    expect(flattened.match(/from-a/g)).toHaveLength(1);
+  });
+
+  it('appends CLAUDE.local.md (identity seed) after the flattened index', () => {
+    writeComposedGroup();
+    fs.writeFileSync(path.join(groupDir, 'CLAUDE.local.md'), 'You are Nano, the group assistant.\n');
+
+    const context = buildPiGroupContext(groupDir);
+
+    expect(context).toContain('Valid destinations: telegram:12345');
+    expect(context).toContain('You are Nano, the group assistant.');
+    expect(context.indexOf('Valid destinations')).toBeLessThan(context.indexOf('You are Nano'));
+  });
+
+  it('returns empty for a cwd without context files', () => {
+    expect(buildPiGroupContext(groupDir)).toBe('');
   });
 });
 
@@ -349,6 +436,53 @@ describe('PiProvider.query', () => {
     expect(events[0]).toEqual({ type: 'init', continuation: 'prev-session-1' });
     expect(events.some((e) => e.type === 'error')).toBe(false);
     expect(events.filter((e) => e.type === 'result')).toEqual([{ type: 'result', text: 'resumed fine' }]);
+  });
+
+  it('passes the flattened group context via --append-system-prompt and disables pi context-file loading', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-query-ctx-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.claude-fragments'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), '@./.claude-fragments/module-chat.md\n');
+      fs.writeFileSync(path.join(cwd, '.claude-fragments', 'module-chat.md'), 'Reply only to destinations listed in the destination doc.\n');
+      fs.writeFileSync(path.join(cwd, 'CLAUDE.local.md'), 'group identity notes\n');
+
+      const fake = new FakeChild();
+      let spawnArgs: string[] = [];
+      const runtime: PiRuntimeDeps = {
+        spawn: (_cmd, args) => {
+          spawnArgs = args;
+          return fake as unknown as ChildProcessLike;
+        },
+        generateSessionId: () => 'sess-1',
+      };
+      const provider = new PiProvider({}, runtime);
+      const query = provider.query({
+        prompt: 'hi',
+        cwd,
+        systemContext: { instructions: 'runner addendum' },
+      });
+      const events: ProviderEvent[] = [];
+      const done = collect(query.events, events);
+
+      await waitFor(() => fake.commands().length >= 1);
+
+      expect(spawnArgs).toContain('--no-context-files');
+      const appends = spawnArgs
+        .map((a, i) => (a === '--append-system-prompt' ? spawnArgs[i + 1] : null))
+        .filter((v): v is string => v !== null);
+      // Flattened group context first, runner addendum second.
+      expect(appends).toHaveLength(2);
+      expect(appends[0]).toContain('Reply only to destinations listed in the destination doc.');
+      expect(appends[0]).toContain('group identity notes');
+      expect(appends[0]).not.toContain('@./.claude-fragments');
+      expect(appends[1]).toBe('runner addendum');
+
+      query.abort();
+      fake.emit('exit', null, 'SIGTERM');
+      await done;
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it('does not issue a get_state resume check when no continuation is supplied', async () => {

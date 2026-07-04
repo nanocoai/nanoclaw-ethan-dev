@@ -22,6 +22,12 @@ It is a *seed*, not pi's live config dir, because a read-only mount at the live 
 
 The copy never overwrites: once `auth.json` exists in the per-group dir, seeding is skipped entirely, so a token pi refreshed there wins over a stale host seed. **Caveat:** each group therefore holds its own copy of the credentials, which can diverge from the host's after a token refresh (in either direction). If you rotate keys on the host, delete the group's copy (`data/v2-sessions/<agent-group-id>/.pi-shared/agent/auth.json`) to re-seed on the next container start.
 
+## Group Context (Composed CLAUDE.md)
+
+NanoClaw composes each group's `CLAUDE.md` at spawn as a pure `@`-include index (`@./.claude-shared.md`, `@./.claude-fragments/module-*.md`, …). Claude Code expands those imports natively; pi discovers `CLAUDE.md` as a context file but treats it as **literal text** — left alone, a pi agent sees a list of paths instead of the shared base, destination docs, and module guidance behind them (observed live as invented reply destinations).
+
+The container-side provider therefore flattens the context itself at spawn: it recursively expands whole-line `@`-includes from the group's `CLAUDE.md` (cycle-safe; missing files tolerated with a logged placeholder), appends `CLAUDE.local.md` (the group's identity seed — pi's context discovery only knows `AGENTS.md`/`CLAUDE.md` and would never load it), and passes the result to pi as an extra `--append-system-prompt`. pi's own context-file loading is disabled with `--no-context-files` so the raw unexpanded index is never double-fed. Destination lists and module instructions reach the pi agent as real content, in the system prompt, on every spawn.
+
 ## Skills
 
 pi agents get the same NanoClaw skills their group selects in `container.json` — the group's skill symlink farm (`data/v2-sessions/<agent-group-id>/.claude-shared/skills`, links resolving through the shared `/app/skills` mount) is mounted read-only at `~/.agents/skills`, one of pi's native Agent-Skills discovery paths (and one pi always trusts). Differences from the Claude provider:
@@ -48,6 +54,6 @@ Two files carry pi's host-side wiring:
 
 ## See Also
 
-- `container/agent-runner/src/providers/pi.ts` — the container-side provider (JSON-RPC-over-stdio turn loop, event translation)
+- `container/agent-runner/src/providers/pi.ts` — the container-side provider (JSON-RPC-over-stdio turn loop, event translation, context flattening)
 - [pi on GitHub](https://github.com/earendil-works/pi) — upstream CLI docs
 - `docs/architecture.md` — how the container spawn and mount pipeline works

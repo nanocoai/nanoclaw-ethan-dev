@@ -7,8 +7,11 @@
  * native NanoClaw surfaces of its own (no composed project doc, no
  * skill-discovery links), so — unlike codex — this registration does NOT
  * declare `providesAgentSurfaces`: the default composed CLAUDE.md and skill
- * links apply, and their content reaches pi via `systemContext.instructions`
- * the same way it reaches Claude.
+ * links apply. But pi does NOT expand Claude's `@`-includes — it would read
+ * the composed index as literal paths — so the container-side provider
+ * flattens CLAUDE.md (+ CLAUDE.local.md, which pi's context discovery never
+ * loads) and injects the content via `--append-system-prompt`, with pi's own
+ * context-file loading disabled (`--no-context-files`).
  *
  * Two host paths matter here:
  *
