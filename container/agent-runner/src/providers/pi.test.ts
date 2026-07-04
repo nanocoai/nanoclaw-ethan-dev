@@ -1,11 +1,15 @@
-import { describe, it, expect } from 'bun:test';
+import { afterEach, beforeEach, describe, it, expect } from 'bun:test';
 import { EventEmitter } from 'events';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import {
   PiProvider,
   buildModelArgs,
   createJsonlReader,
   newTranslateState,
+  seedPiAgentConfig,
   translatePiEvent,
   type ChildProcessLike,
   type PiRuntimeDeps,
@@ -77,6 +81,76 @@ describe('buildModelArgs', () => {
       '--model',
       'claude-sonnet-4/preview',
     ]);
+  });
+});
+
+// ── seedPiAgentConfig ──
+
+describe('seedPiAgentConfig', () => {
+  let root: string;
+  let home: string;
+  let seed: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-seed-test-'));
+    home = path.join(root, 'home');
+    seed = path.join(root, 'seed');
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(seed, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const agentDir = (): string => path.join(home, '.pi', 'agent');
+
+  it('copies auth.json (0600), models.json and settings.json from the seed when absent', () => {
+    fs.writeFileSync(path.join(seed, 'auth.json'), '{"anthropic":"sk-seed"}');
+    fs.writeFileSync(path.join(seed, 'models.json'), '{"models":[]}');
+    fs.writeFileSync(path.join(seed, 'settings.json'), '{"theme":"dark"}');
+
+    seedPiAgentConfig(home, seed);
+
+    expect(fs.readFileSync(path.join(agentDir(), 'auth.json'), 'utf-8')).toBe('{"anthropic":"sk-seed"}');
+    expect(fs.readFileSync(path.join(agentDir(), 'models.json'), 'utf-8')).toBe('{"models":[]}');
+    expect(fs.readFileSync(path.join(agentDir(), 'settings.json'), 'utf-8')).toBe('{"theme":"dark"}');
+    expect(fs.statSync(agentDir()).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(agentDir(), 'auth.json')).mode & 0o777).toBe(0o600);
+  });
+
+  it('copies only the seed files that exist', () => {
+    fs.writeFileSync(path.join(seed, 'auth.json'), '{"k":"v"}');
+    // no models.json / settings.json in the seed
+
+    seedPiAgentConfig(home, seed);
+
+    expect(fs.existsSync(path.join(agentDir(), 'auth.json'))).toBe(true);
+    expect(fs.existsSync(path.join(agentDir(), 'models.json'))).toBe(false);
+    expect(fs.existsSync(path.join(agentDir(), 'settings.json'))).toBe(false);
+  });
+
+  it('never clobbers an existing auth.json — a refreshed token wins over the stale seed', () => {
+    fs.mkdirSync(agentDir(), { recursive: true });
+    fs.writeFileSync(path.join(agentDir(), 'auth.json'), '{"anthropic":"sk-refreshed"}');
+    fs.writeFileSync(path.join(seed, 'auth.json'), '{"anthropic":"sk-stale-seed"}');
+    fs.writeFileSync(path.join(seed, 'models.json'), '{"models":["new"]}');
+
+    seedPiAgentConfig(home, seed);
+
+    expect(fs.readFileSync(path.join(agentDir(), 'auth.json'), 'utf-8')).toBe('{"anthropic":"sk-refreshed"}');
+    // The whole copy is gated on auth.json's absence: nothing else is touched.
+    expect(fs.existsSync(path.join(agentDir(), 'models.json'))).toBe(false);
+  });
+
+  it('skips entirely when no seed dir is configured', () => {
+    seedPiAgentConfig(home, undefined);
+    expect(fs.existsSync(path.join(home, '.pi'))).toBe(false);
+  });
+
+  it('skips when the seed dir is missing or unreadable', () => {
+    seedPiAgentConfig(home, path.join(root, 'no-such-seed'));
+    expect(fs.existsSync(path.join(home, '.pi'))).toBe(false);
   });
 });
 

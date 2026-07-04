@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
 import path from 'path';
 import { StringDecoder } from 'string_decoder';
 
@@ -32,6 +33,66 @@ function graceMs(): number {
  */
 function piSessionDir(): string {
   return process.env.PI_SESSION_DIR || path.join(process.env.HOME || '/home/node', '.pi', 'sessions');
+}
+
+/** Config files copied from the read-only host seed into pi's live config dir. */
+const PI_SEED_FILES = ['auth.json', 'models.json', 'settings.json'] as const;
+
+/**
+ * One-time credential/config seeding for pi's live config dir.
+ *
+ * The host mounts the operator's `~/.pi/agent` READ-ONLY at
+ * `PI_AGENT_SEED_DIR` — it cannot be mounted at pi's live config path,
+ * because pi's FileAuthStorageBackend wraps even auth READS in
+ * proper-lockfile (dist/core/auth-storage.js), which creates
+ * `auth.json.lock` next to the file: EROFS on a read-only mount, surfacing
+ * as "No API key found" with the key sitting right there. OAuth token
+ * refresh needs real writes anyway. So the writable per-group `~/.pi/agent`
+ * is seeded from the RO mount instead.
+ *
+ * The whole copy is gated on the ABSENCE of `auth.json` in the live dir, and
+ * no individual file is ever overwritten: a token pi refreshed into the
+ * persistent per-group copy must win over the (possibly stale) host seed.
+ */
+export function seedPiAgentConfig(
+  homeDir: string = process.env.HOME || '/home/node',
+  seedDir: string | undefined = process.env.PI_AGENT_SEED_DIR,
+): void {
+  if (!seedDir) return;
+
+  const agentDir = path.join(homeDir, '.pi', 'agent');
+  if (fs.existsSync(path.join(agentDir, 'auth.json'))) {
+    log(`pi agent config already present at ${agentDir}; seed copy skipped`);
+    return;
+  }
+
+  let seedIsDir = false;
+  try {
+    seedIsDir = fs.statSync(seedDir).isDirectory();
+  } catch {
+    /* unreadable/missing */
+  }
+  if (!seedIsDir) {
+    log(`PI_AGENT_SEED_DIR ${seedDir} is not a readable directory; seed copy skipped`);
+    return;
+  }
+
+  try {
+    fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(agentDir, 0o700);
+    const copied: string[] = [];
+    for (const name of PI_SEED_FILES) {
+      const src = path.join(seedDir, name);
+      const dest = path.join(agentDir, name);
+      if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
+      fs.copyFileSync(src, dest);
+      if (name === 'auth.json') fs.chmodSync(dest, 0o600);
+      copied.push(name);
+    }
+    log(`seeded pi agent config from ${seedDir} into ${agentDir} (${copied.join(', ') || 'nothing to copy'})`);
+  } catch (err) {
+    log(`seed copy from ${seedDir} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /**
@@ -315,6 +376,11 @@ export class PiProvider implements AgentProvider {
     if (mcpCount > 0) {
       log(`pi has no MCP support; ignoring ${mcpCount} configured MCP server(s)`);
     }
+
+    // Seed pi's writable config dir from the host's RO seed mount before the
+    // first spawn — pi resolves auth at startup. Idempotent: no-op once
+    // auth.json exists in the persistent per-group dir.
+    seedPiAgentConfig();
 
     const sessionId = isValidSessionId(input.continuation) ? input.continuation : this.runtime.generateSessionId();
     const args = buildPiArgs(sessionId, piSessionDir(), this.model, input.systemContext?.instructions);

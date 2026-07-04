@@ -16,7 +16,11 @@ pi's model setting uses `<pi-provider>/<model-id>`, split on the **first** slash
 
 ## Credentials and Custom Endpoints
 
-pi does not go through NanoClaw's OneCLI credential vault. Instead, the host's own pi config directory — `~/.pi/agent` (`models.json` for custom provider/endpoint definitions, `auth.json` for keys) — is bind-mounted **read-only** into the container at the same path. Set these up once on the host by configuring `pi` normally there; NanoClaw never writes to this directory, only mounts it if it already exists. If it's missing, the container's pi process fails auth resolution exactly as it would running unconfigured outside a container.
+pi does not go through NanoClaw's OneCLI credential vault. Instead, the host's own pi config directory — `~/.pi/agent` (`models.json` for custom provider/endpoint definitions, `auth.json` for keys, `settings.json`) — is bind-mounted **read-only** at a seed path (`/run/pi-agent-seed`, advertised to the container via `PI_AGENT_SEED_DIR`). Set it up once on the host by configuring `pi` normally there; NanoClaw never writes to it, only mounts it if it already exists. If it's missing, the container's pi process fails auth resolution exactly as it would running unconfigured outside a container.
+
+It is a *seed*, not pi's live config dir, because a read-only mount at the live path fundamentally cannot work: pi wraps even auth **reads** in a file lock (`proper-lockfile` creates `auth.json.lock` next to the file), so on a read-only mount every auth read fails with EROFS and pi reports "No API key found" despite the key being present — and OAuth token refresh needs real writes regardless. On first run, the container-side provider copies `auth.json` (mode 0600), `models.json`, and `settings.json` from the seed into the writable, per-group `~/.pi/agent` (mode 0700).
+
+The copy never overwrites: once `auth.json` exists in the per-group dir, seeding is skipped entirely, so a token pi refreshed there wins over a stale host seed. **Caveat:** each group therefore holds its own copy of the credentials, which can diverge from the host's after a token refresh (in either direction). If you rotate keys on the host, delete the group's copy (`data/v2-sessions/<agent-group-id>/.pi-shared/agent/auth.json`) to re-seed on the next container start.
 
 ## Skills
 
@@ -32,13 +36,13 @@ pi has no MCP client. Any MCP servers configured on the group are silently ignor
 
 ## Session Persistence
 
-pi keeps its own on-disk session store rather than using NanoClaw's memory-scaffold continuation. That store lives under a per-group directory (`data/v2-sessions/<agent-group-id>/.pi-shared`) mounted read-write into the container and pointed to via `PI_SESSION_DIR`, so it survives session and container respawns the same way Claude's and Codex's own state directories do. NanoClaw still scaffolds the standard `memory/` tree for the agent's own notes, since pi opts into it — pi's session JSONL is a separate, provider-owned mechanism for turn continuity.
+pi keeps its own on-disk session store rather than using NanoClaw's memory-scaffold continuation. A per-group directory (`data/v2-sessions/<agent-group-id>/.pi-shared`) is mounted read-write over the container's entire `~/.pi`, so both `sessions/` (the JSONL transcripts, pointed to via `PI_SESSION_DIR=/home/node/.pi/sessions`) and `agent/` (the seeded credential copy — see above) survive session and container respawns the same way Claude's and Codex's own state directories do. NanoClaw still scaffolds the standard `memory/` tree for the agent's own notes, since pi opts into it — pi's session JSONL is a separate, provider-owned mechanism for turn continuity.
 
 ## What Changes at the Code Level
 
 Two files carry pi's host-side wiring:
 
-**`src/providers/pi.ts`** — registers the `pi` container config: the `.pi-shared` session mount + `PI_SESSION_DIR` env, the conditional `~/.pi/agent` read-only mount, and the group skills farm at `~/.agents/skills`.
+**`src/providers/pi.ts`** — registers the `pi` container config: the `.pi-shared` RW mount over `~/.pi` + `PI_SESSION_DIR` env, the conditional read-only seed mount of the host's `~/.pi/agent` at `/run/pi-agent-seed` (+ `PI_AGENT_SEED_DIR`), and the group skills farm at `~/.agents/skills`.
 
 **`container/cli-tools.json`** — pins `@earendil-works/pi-coding-agent` as a global CLI installed into the agent image.
 

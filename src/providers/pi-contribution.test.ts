@@ -5,12 +5,15 @@
  * host-contribution test; no DB leg because pi's contribution reads none.
  *
  * Guards the mount/env shape the spawn path depends on:
- *   - `.pi-shared` per-group session dir created + mounted RW, with
- *     PI_SESSION_DIR pointing the container-side provider at it.
- *   - operator's ~/.pi/agent mounted RO only when it exists (never created).
+ *   - `.pi-shared` per-group state dir created + mounted RW over the whole
+ *     container ~/.pi (sessions/ AND agent/ persist), with PI_SESSION_DIR
+ *     pointing the container-side provider at ~/.pi/sessions.
+ *   - operator's ~/.pi/agent mounted RO at the /run/pi-agent-seed SEED path
+ *     (never at pi's live, must-be-writable config dir) only when it exists
+ *     (never created), advertised via PI_AGENT_SEED_DIR.
  *   - the group's `.claude-shared/skills` symlink farm mounted RO at
  *     ~/.agents/skills (pi's always-trusted user skills source) only when it
- *     exists — NOT nested under the conditional RO ~/.pi/agent mount.
+ *     exists.
  */
 import fs from 'fs';
 import path from 'path';
@@ -53,22 +56,23 @@ describe('pi host contribution', () => {
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  it('creates and mounts the per-group session dir RW and points PI_SESSION_DIR at it', () => {
+  it('creates and mounts the per-group state dir RW over ~/.pi and points PI_SESSION_DIR at sessions/', () => {
     const contribution = runContribution();
 
     const piShared = path.join(DATA_DIR, 'v2-sessions', GROUP_ID, '.pi-shared');
     expect(fs.existsSync(piShared)).toBe(true);
     expect(contribution.mounts).toContainEqual({
       hostPath: piShared,
-      containerPath: '/home/node/.pi/sessions',
+      containerPath: '/home/node/.pi',
       readonly: false,
     });
     expect(contribution.env).toEqual({ PI_SESSION_DIR: '/home/node/.pi/sessions' });
   });
 
-  it('mounts the operator ~/.pi/agent config RO only when it exists, and never creates it', () => {
+  it('mounts the operator ~/.pi/agent RO at the seed path only when it exists, advertising PI_AGENT_SEED_DIR', () => {
     const withoutConfig = runContribution();
-    expect(withoutConfig.mounts?.some((m) => m.containerPath === '/home/node/.pi/agent')).toBe(false);
+    expect(withoutConfig.mounts?.some((m) => m.containerPath === '/run/pi-agent-seed')).toBe(false);
+    expect(withoutConfig.env).not.toHaveProperty('PI_AGENT_SEED_DIR');
     expect(fs.existsSync(path.join(HOME, '.pi', 'agent'))).toBe(false);
 
     const hostAgentDir = path.join(HOME, '.pi', 'agent');
@@ -76,9 +80,15 @@ describe('pi host contribution', () => {
     const withConfig = runContribution();
     expect(withConfig.mounts).toContainEqual({
       hostPath: hostAgentDir,
-      containerPath: '/home/node/.pi/agent',
+      containerPath: '/run/pi-agent-seed',
       readonly: true,
     });
+    expect(withConfig.env).toEqual({
+      PI_SESSION_DIR: '/home/node/.pi/sessions',
+      PI_AGENT_SEED_DIR: '/run/pi-agent-seed',
+    });
+    // Never mounted over pi's live config dir — that must stay writable.
+    expect(withConfig.mounts?.some((m) => m.containerPath === '/home/node/.pi/agent')).toBe(false);
   });
 
   it('mounts the group skills farm RO at ~/.agents/skills only when it exists', () => {
