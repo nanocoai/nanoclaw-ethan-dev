@@ -46,9 +46,9 @@ const PI_SEED_FILES = ['auth.json', 'models.json', 'settings.json'] as const;
  * because pi's FileAuthStorageBackend wraps even auth READS in
  * proper-lockfile (dist/core/auth-storage.js), which creates
  * `auth.json.lock` next to the file: EROFS on a read-only mount, surfacing
- * as "No API key found" with the key sitting right there. OAuth token
- * refresh needs real writes anyway. So the writable per-group `~/.pi/agent`
- * is seeded from the RO mount instead.
+ * as "No API key found" with the key sitting right there (filed upstream as
+ * earendil-works/pi#6406). OAuth token refresh needs real writes anyway. So
+ * the writable per-group `~/.pi/agent` is seeded from the RO mount instead.
  *
  * The whole copy is gated on the ABSENCE of `auth.json` in the live dir, and
  * no individual file is ever overwritten: a token pi refreshed into the
@@ -195,7 +195,8 @@ function isValidSessionId(id: string | undefined): id is string {
  * `--session-id` path: an unknown id silently falls through to
  * `SessionManager.create()` and starts a fresh empty session (verified
  * against pi 0.80.3 — the "No session found matching" string only fires on
- * the --fork/--session fuzzy-resolve paths in `main.js`). So the provider
+ * the --fork/--session fuzzy-resolve paths in `main.js`; filed upstream as
+ * earendil-works/pi#6407). So the provider
  * detects the condition itself: when resuming a continuation it issues
  * `get_state` and, if the session reports zero messages, surfaces an error
  * crafted to match this regex so the runner's clear-continuation →

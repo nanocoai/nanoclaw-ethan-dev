@@ -23,7 +23,8 @@
  *     live config path: pi's FileAuthStorageBackend wraps every auth READ in
  *     proper-lockfile, which mkdirs `auth.json.lock` next to the file — on
  *     an RO mount that's EROFS and pi reports "No API key found" despite the
- *     key being right there; OAuth token refresh needs real writes anyway.
+ *     key being right there (filed upstream as earendil-works/pi#6406);
+ *     OAuth token refresh needs real writes anyway.
  *     Instead the host dir is mounted READ-ONLY at a SEED path
  *     (`/run/pi-agent-seed`, advertised via `PI_AGENT_SEED_DIR`) and the
  *     container-side provider copies auth.json/models.json/settings.json
