@@ -31,11 +31,10 @@ rm -f src/providers/pi.ts \
       container/agent-runner/src/providers/pi.ts \
       container/agent-runner/src/providers/pi.test.ts \
       container/agent-runner/src/providers/pi-registration.test.ts \
-      container/agent-runner/src/providers/pi-cli-tools.test.ts \
-      docs/pi.md
+      container/agent-runner/src/providers/pi-cli-tools.test.ts
 ```
 
-This skill itself (`.claude/skills/add-pi/`) stays — it ships with trunk so the provider can be re-added later.
+This skill itself (`.claude/skills/add-pi/`) and `docs/pi.md` stay — both ship with trunk so the provider can be re-added later.
 
 ## 4. Remove the CLI manifest entry
 

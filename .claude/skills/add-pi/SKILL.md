@@ -47,8 +47,7 @@ Container (`container/agent-runner/src/providers/`):
 - `pi-registration.test.ts` — barrel-driven container registration guard
 - `pi-cli-tools.test.ts` — structural guard for the pi entry in `container/cli-tools.json`
 
-Docs:
-- `docs/pi.md` — operator-facing: model selection, credential seeding semantics, skills, session persistence
+(The operator-facing doc, [docs/pi.md](../../docs/pi.md) — model selection, credential seeding semantics, skills, session persistence — ships with this skill on trunk; it is not part of the payload copy.)
 
 ### Wire the barrels
 
