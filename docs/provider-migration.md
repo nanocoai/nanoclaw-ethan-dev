@@ -32,7 +32,7 @@ Sessions resolve their provider at container spawn (`sessions.agent_provider` is
 
 - **Agent memory.** Each provider keeps its own store: Claude's per-group memory is `CLAUDE.local.md` in the workspace; scaffold providers (e.g. Codex) keep a `memory/` tree. Neither is touched by a switch — the old store sits intact, the new provider starts with its own. To carry memory across, run **`/migrate-memory`**: your coding agent reads the source store, distills it into the target store (copy, never move), and restarts the group. Both directions work.
 - **In-flight conversation context.** Continuations are provider-specific (a Claude SDK session, a Codex thread) and stored in separate per-provider slots — the new provider starts a fresh thread. The old slot is kept, not deleted. Recent context is recoverable from `conversations/` archives.
-- **Provider state dirs** (`.claude-shared/`, `.codex-shared/`). Each provider keeps its own; they sit idle while unused and are reused if you switch back.
+- **Provider state dirs** (`.claude-shared/`, `.codex-shared/`, `.pi-shared/`). Each provider keeps its own; they sit idle while unused and are reused if you switch back. Note that pi's dir also holds the group's seeded copy of the operator's pi credentials, which a switch does not remove — see the `/add-pi` skill's removal notes if that matters to you.
 
 ## Rolling back
 
