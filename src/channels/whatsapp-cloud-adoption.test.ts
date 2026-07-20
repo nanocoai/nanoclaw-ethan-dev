@@ -7,8 +7,9 @@
  * core predates 016, so after runMigrations() the test recreates the table with
  * 016's exact DDL to reproduce the installed schema.
  *
- * getRegisteredChannelNames is mocked so the Baileys guard is exercised without
- * importing the channel barrel (which pulls uninstalled @chat-adapter packages).
+ * The registry is mocked so the Baileys guard is exercised without importing the
+ * channel barrel. Importing whatsapp-cloud.ts directly does pull
+ * @chat-adapter/whatsapp, which is a declared dependency on this branch.
  */
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,11 +18,18 @@ import { initTestDb, closeDb, getDb, runMigrations } from '../db/index.js';
 
 const registryState = vi.hoisted(() => ({ baileysRegistered: false }));
 
+// Importing the adapter module runs its top-level registerChannelAdapter, so
+// the mock supplies that too. readEnvFile is mocked because the factory reads
+// credentials off disk; it is never invoked here, but the module-level import
+// must not depend on a populated .env.
 vi.mock('./channel-registry.js', () => ({
+  registerChannelAdapter: (): void => {},
   getRegisteredChannelNames: (): string[] => (registryState.baileysRegistered ? ['whatsapp'] : []),
 }));
 
-import { adoptStrandedWhatsAppCloudGroups } from './whatsapp-cloud-adoption.js';
+vi.mock('../env.js', () => ({ readEnvFile: () => ({}) }));
+
+import { adoptStrandedWhatsAppCloudGroups } from './whatsapp-cloud.js';
 
 /**
  * Recreate messaging_groups with migration 016's schema (instance column,
