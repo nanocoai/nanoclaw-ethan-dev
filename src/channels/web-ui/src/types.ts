@@ -41,7 +41,7 @@ export interface TypingFrame {
 export interface MessageFrame {
   type: 'message';
   id: string;
-  role: 'assistant';
+  role: 'assistant' | 'user';
   content: string;
   seq: number;
 }
@@ -129,6 +129,13 @@ export interface HistoryFrame {
 export interface UserMessageFrame {
   type: 'user_message';
   text: string;
+  /**
+   * Client-generated id for this send. The server echoes it back as the `id`
+   * on the MessageFrame it records for replay, so the client's own optimistic
+   * local echo (see useNanoclaw.ts sendMessage) and the server-confirmed copy
+   * carry the same id and dedupe cleanly instead of rendering twice.
+   */
+  clientId?: string;
 }
 
 export interface ActionFrame {

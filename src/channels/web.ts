@@ -259,6 +259,18 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     }
 
     if (msg.type === 'user_message' && typeof msg.text === 'string' && msg.text.length > 0) {
+      // Record the operator's own message into the same replay history the
+      // assistant side already uses (emit() below), so a refresh doesn't drop
+      // the user's half of the conversation — the gap this fixes. Reuse the
+      // client's own locally-generated id when it sends one (see
+      // useNanoclaw.ts sendMessage) so the browser's optimistic local echo
+      // and this recorded frame carry the SAME id: the client reducer then
+      // replaces the echo in place instead of showing the message twice.
+      // Falls back to a server-generated id for older/other clients that
+      // don't send one — never breaks the wire contract.
+      const clientId = typeof msg.clientId === 'string' && msg.clientId.length > 0 ? msg.clientId : undefined;
+      emit({ type: 'message', id: clientId ?? nextId('user'), role: 'user', content: msg.text });
+
       void Promise.resolve(
         config.onInbound(PLATFORM_ID, null, {
           id: nextId('web'),

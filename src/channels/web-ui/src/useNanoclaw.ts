@@ -9,8 +9,21 @@ import type { ChatMessage, ConnectionStatus, ConversationItem, ServerFrame } fro
  */
 function applyServerFrame(items: ConversationItem[], frame: ServerFrame): ConversationItem[] {
   switch (frame.type) {
-    case 'message':
-      return [...items, { kind: 'message', id: frame.id, role: 'assistant', content: frame.content }];
+    case 'message': {
+      // Find-or-append rather than a blind append: a user's own message
+      // frame carries the SAME id as the optimistic local echo sendMessage()
+      // already pushed into `items` (see the clientId round-trip in web.ts),
+      // so this replaces that echo in place instead of showing it twice.
+      // Assistant frames get server-generated ids that never collide with an
+      // existing item, so they always fall through to a plain append — no
+      // behavior change there.
+      const index = items.findIndex((item) => item.id === frame.id);
+      const applied: ChatMessage = { kind: 'message', id: frame.id, role: frame.role, content: frame.content };
+      if (index === -1) return [...items, applied];
+      const next = items.slice();
+      next[index] = applied;
+      return next;
+    }
     case 'card':
       return [
         ...items,
@@ -292,12 +305,18 @@ export function useNanoclaw(): NanoclawState {
   const sendMessage = useCallback((text: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'user_message', text }));
+    // Generate the id BEFORE sending and reuse it for both the wire frame and
+    // the optimistic local echo below — web.ts echoes this same id back on
+    // the recorded MessageFrame, which is what lets applyServerFrame's
+    // find-or-append replace this echo in place instead of duplicating it
+    // once the server-confirmed (seq-bearing) frame arrives.
+    const clientId = `local-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    ws.send(JSON.stringify({ type: 'user_message', text, clientId }));
     setItems((prev) => [
       ...prev,
       {
         kind: 'message',
-        id: `local-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+        id: clientId,
         role: 'user',
         content: text,
       },
