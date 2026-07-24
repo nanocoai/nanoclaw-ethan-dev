@@ -21,6 +21,14 @@
  * once on the WebSocket upgrade (`/ws?token=...`); compared in constant time.
  * The token is never written to logs.
  *
+ * Replay history: every recorded frame is also mirrored to
+ * `<DATA_DIR>/web-channel-history.jsonl` (append-only, periodically
+ * compacted) so a process restart still has a conversation to replay, not
+ * just a teardown()+setup() bounce in the same process — see the `history`/
+ * `frameSeq` comments below for the seq-monotonicity guarantee this relies
+ * on. Attachment BYTES are never persisted this way — see the `files` map
+ * comment.
+ *
  * Single-user demo grade. Bind stays 127.0.0.1; expose via SSH/tailscale tunnel.
  */
 import crypto from 'crypto';
@@ -429,12 +437,113 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   const deliveredMessageIds = new Set<string>();
 
   // Bounded in-memory replay log — lets a reconnecting client rebuild the
-  // conversation instead of showing a blank screen. Deliberately not
-  // persisted: it lives in this closure, so it survives a teardown()+setup()
-  // network bounce (same adapter instance) but not a process restart.
-  // Transient frames (typing) are never recorded.
+  // conversation instead of showing a blank screen. Also mirrored to disk
+  // (see appendHistoryFrame/loadHistoryFromDisk below) so a process restart
+  // — not just a teardown()+setup() bounce in the same process — still has
+  // something to replay; the in-memory array itself is what survives an
+  // in-process teardown()+setup() (same closure), same as before.
+  // Transient frames (typing) are never recorded — neither here nor on disk.
   const HISTORY_LIMIT = 200;
   const history: Record<string, unknown>[] = [];
+
+  // Disk mirror of `history`, one JSON line per emit()-recorded frame,
+  // append-only (plus periodic compaction — see below). Lives next to the
+  // token file under the same DATA_DIR. File BYTES for attachments are
+  // deliberately NOT persisted here (the `files` map below stays in-memory
+  // only) — a replayed `file` frame from before a restart 404s on download;
+  // AttachmentRow.tsx already treats that as "no longer available" (fetch
+  // failure / img onError), so nothing on the SPA side needs to change.
+  function historyFilePath(): string {
+    return path.join(dataDir, 'web-channel-history.jsonl');
+  }
+
+  // Compact once the on-disk file grows past this many lines — otherwise an
+  // append-only log outlives every eviction the in-memory ring already does
+  // and grows forever. 4x HISTORY_LIMIT is generous slack between compactions
+  // without letting the file balloon.
+  const HISTORY_COMPACT_LIMIT = HISTORY_LIMIT * 4;
+  let historyLinesOnDisk = 0;
+
+  // Loaded exactly once per adapter INSTANCE, at the true cold-start
+  // setup() — never on a teardown()+setup() bounce in the same process
+  // (SIGUSR2 in the harness, a network re-init), because at that point
+  // `history`/`frameSeq` already hold the live in-memory state and reloading
+  // from disk would duplicate every frame already in the ring.
+  let historyBootstrapped = false;
+
+  /**
+   * Cold-start only: read the jsonl file (if any), seed `history` with its
+   * tail (same HISTORY_LIMIT bound as the live ring) and restore `frameSeq`
+   * to the highest seq ever written — NOT just the highest seq in the
+   * retained tail, since a seq belonging to a since-evicted/compacted-away
+   * frame must still never be reissued. This is what keeps seq monotonic
+   * across a process restart: the client's replay merge (useNanoclaw.ts)
+   * relies on seq being a strictly increasing, never-repeating id, and a
+   * naive `frameSeq = 0` restart would immediately reissue seq 1 for a
+   * brand-new frame even though a client may already hold an old seq 1.
+   * Corrupt/unparseable lines are skipped with a warning; this must never
+   * throw — a bad history file is not a reason to fail setup().
+   */
+  function loadHistoryFromDisk(): void {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(historyFilePath(), 'utf8');
+    } catch {
+      return; // no history file yet (fresh install / fresh DATA_DIR) — nothing to load
+    }
+    const lines = raw.split('\n').filter((line) => line.trim().length > 0);
+    const loaded: Record<string, unknown>[] = [];
+    let maxSeq = 0;
+    for (const line of lines) {
+      let frame: unknown;
+      try {
+        frame = JSON.parse(line);
+      } catch (err) {
+        log.warn('Skipping corrupt web-channel-history.jsonl line (invalid JSON)', { err });
+        continue;
+      }
+      if (typeof frame !== 'object' || frame === null || typeof (frame as Record<string, unknown>).seq !== 'number') {
+        log.warn('Skipping malformed web-channel-history.jsonl line (missing numeric seq)');
+        continue;
+      }
+      const record = frame as Record<string, unknown>;
+      loaded.push(record);
+      if ((record.seq as number) > maxSeq) maxSeq = record.seq as number;
+    }
+    const tail = loaded.slice(-HISTORY_LIMIT);
+    history.push(...tail);
+    frameSeq = maxSeq;
+    historyLinesOnDisk = lines.length;
+    log.info('Loaded web channel history from disk', {
+      linesOnDisk: historyLinesOnDisk,
+      replayed: tail.length,
+      resumedAtSeq: frameSeq,
+    });
+  }
+
+  /** Rewrite the file to hold exactly the current (bounded) in-memory ring. */
+  function compactHistoryFile(): void {
+    try {
+      const body = history.map((frame) => JSON.stringify(frame)).join('\n');
+      fs.writeFileSync(historyFilePath(), history.length > 0 ? body + '\n' : '');
+      historyLinesOnDisk = history.length;
+    } catch (err) {
+      log.warn('Could not compact web-channel-history.jsonl (continuing uncompacted)', { err });
+    }
+  }
+
+  /** Append one recorded frame to disk; synchronous so it survives a SIGTERM'd restart. */
+  function appendHistoryFrame(frame: Record<string, unknown>): void {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.appendFileSync(historyFilePath(), JSON.stringify(frame) + '\n');
+      historyLinesOnDisk++;
+    } catch (err) {
+      log.warn('Could not persist web-channel-history frame (continuing in-memory only)', { err });
+      return;
+    }
+    if (historyLinesOnDisk > HISTORY_COMPACT_LIMIT) compactHistoryFile();
+  }
 
   // P2a outbound attachments: id -> bytes. `files` is a Map so insertion
   // order IS FIFO eviction order (see evictOldestFilesIfNeeded). Cleared on
@@ -560,6 +669,9 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     frame.ts = Date.now();
     history.push(frame);
     if (history.length > HISTORY_LIMIT) history.shift();
+    // Persist before broadcasting: a crash between the two would rather lose
+    // a live delivery than lose durability of one that already went out.
+    appendHistoryFrame(frame);
     broadcast(frame);
   }
 
@@ -881,6 +993,16 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
 
     async setup(config: ChannelSetup): Promise<void> {
       currentConfig = config;
+
+      // Cold-start only (see loadHistoryFromDisk's doc comment): restores
+      // `history` + `frameSeq` from the jsonl mirror so a process restart
+      // (not just a teardown()+setup() bounce) still has something to
+      // replay, and so newly emitted frames keep counting up from where the
+      // previous process left off instead of colliding with old seqs.
+      if (!historyBootstrapped) {
+        historyBootstrapped = true;
+        loadHistoryFromDisk();
+      }
 
       // P2b: resolve the bundle fingerprint once per setup(), from whatever
       // is ACTUALLY on disk under staticRoot right now — never a stale value
