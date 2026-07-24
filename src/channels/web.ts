@@ -167,6 +167,33 @@ function spaDir(): string {
   return path.join(here, 'web-ui', 'dist');
 }
 
+// P2b stale-bundle detection. Real incident (twice in one day): a browser tab
+// left open across a server deploy keeps running the OLD SPA bundle, then the
+// new server starts sending frame shapes that bundle doesn't know about
+// (role:user echoes rendered as duplicates once; a `file` frame silently not
+// rendered another time). Cache headers (no-store on index.html, above) fix a
+// plain reload but can't reach a tab that's already open and never reloads.
+//
+// Fix: read the SPA's own build fingerprint straight off the served
+// index.html's hashed entry script (e.g. `index-BCC2gOvE.js`) and hand it to
+// every connecting client in the `ready` frame as `bundle`. Deliberately NOT
+// a hand-bumped constant — those rot the moment someone forgets to bump them
+// (this repo's own history: the cache-header fix earlier today was needed
+// because staleness detection had no signal at all). The SPA compares this
+// against its own script tag at connect time (useNanoclaw.ts) and reloads
+// itself once if they disagree.
+function readBundleFingerprint(dir: string): string | undefined {
+  try {
+    const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+    // Matches the vite-built <script type="module" src="./assets/index-HASH.js">
+    // tag verbatim — same shape the SPA itself parses out of its own DOM.
+    const match = html.match(/<script[^>]+\ssrc="[^"]*\/(index-[^"/]+\.js)"/);
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
 /** Resolve the shared token: env override, else persisted, else generate+persist. */
 function resolveToken(dataDir: string): { token: string; generated: boolean } {
   const fromEnv = process.env.NANOCLAW_WEB_TOKEN;
@@ -194,6 +221,17 @@ export interface WebChannelOptions {
   dataDir?: string;
   /** Override the served SPA directory (tests). Defaults to ./web-ui/dist. */
   staticDir?: string;
+  /**
+   * Override the `bundle` fingerprint reported in the `ready` frame
+   * (tests/harness only — real production always computes this from the
+   * served SPA's own index.html, see readBundleFingerprint()). `null` means
+   * "omit the field entirely", simulating a pre-P2b server for backward-compat
+   * proofs. Leaving this key out of the options object entirely (the normal
+   * case) means "use the real computed fingerprint" — distinct from passing
+   * `null`, which is why this is checked with `in`/`hasOwnProperty` at setup()
+   * time rather than treated as equivalent to `undefined`.
+   */
+  bundleOverride?: string | null;
 }
 
 export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapter {
@@ -206,6 +244,12 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   let server: http.Server | null = null;
   let wss: WebSocketServer | null = null;
   const clients = new Set<WebSocket>();
+
+  // P2b: the SPA build fingerprint handed to clients in the `ready` frame.
+  // Computed once per setup() (see the setup() body below) from whatever this
+  // adapter instance is ACTUALLY serving, so a re-deploy (new process, fresh
+  // dist/) is picked up automatically without a hand-bumped constant.
+  let currentBundle: string | undefined;
 
   // Standard `ws` isAlive pattern: a WeakMap keyed on the socket (rather than
   // monkey-patching an `isAlive` property onto it) so a client that's already
@@ -505,6 +549,17 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     defaults: WEB_DEFAULTS,
 
     async setup(config: ChannelSetup): Promise<void> {
+      // P2b: resolve the bundle fingerprint once per setup(), from whatever
+      // is ACTUALLY on disk under staticRoot right now — never a stale value
+      // held over from a previous setup() in this same process (a
+      // teardown()+setup() bounce, e.g. SIGUSR2 in the test harness, must see
+      // a fresh dist/ if one was swapped in between). `bundleOverride` is
+      // test/harness-only (see WebChannelOptions doc) and, when present at
+      // all (even as `null`), wins over the real computation.
+      currentBundle = Object.prototype.hasOwnProperty.call(options, 'bundleOverride')
+        ? (options.bundleOverride ?? undefined)
+        : readBundleFingerprint(staticRoot);
+
       server = http.createServer((req, res) => serveStatic(req, res));
       wss = new WebSocketServer({ noServer: true });
 
@@ -556,7 +611,12 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           // `history`, so without this a client that missed the one
           // clearing frame (dropped mid-turn, reconnected after the server
           // already went quiet) would show ghost dots forever.
-          ws.send(JSON.stringify({ type: 'ready', threadId: null, typing: typingState }));
+          // P2b: `bundle` is omitted entirely (not sent as null/empty) when
+          // there's nothing to report — the SPA's backward-compat contract is
+          // "field absent => do nothing", never "field present but falsy".
+          const readyFrame: Record<string, unknown> = { type: 'ready', threadId: null, typing: typingState };
+          if (currentBundle) readyFrame.bundle = currentBundle;
+          ws.send(JSON.stringify(readyFrame));
           ws.on('message', (data) => handleClientFrame(data.toString('utf8'), config));
           ws.on('close', () => {
             clients.delete(ws);

@@ -31,6 +31,14 @@ export interface ReadyFrame {
    * value it had before the drop — see useNanoclaw.ts's 'ready' handling.
    */
   typing: boolean;
+  /**
+   * P2b stale-bundle detection: the served SPA's own hashed entry-script
+   * filename (e.g. `index-BCC2gOvE.js`), read server-side off index.html at
+   * setup() time (web.ts readBundleFingerprint). Absent entirely on a server
+   * that predates this feature — that absence must trigger NOTHING client
+   * side (see useNanoclaw.ts), never be treated as "mismatch".
+   */
+  bundle?: string;
 }
 
 export interface TypingFrame {

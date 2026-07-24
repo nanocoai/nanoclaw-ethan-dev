@@ -142,6 +142,64 @@ const TYPING_TIMEOUT_MS = 12000;
 // recovery logic.
 const HEARTBEAT_DEADMAN_MS = 75000;
 
+// P2b stale-bundle detection. Real incident (twice in one day): a tab left
+// open across a server deploy keeps its old SPA bundle in memory, then the
+// new server starts sending frame shapes that bundle was never built to
+// handle (role:user echoes rendered as duplicates once; a `file` frame
+// silently unrendered another time). Cache headers (web.ts, no-store on
+// index.html) fix a plain reload but can't reach a tab that never reloads.
+//
+// ownBundleFingerprint() reads THIS tab's own hashed entry-script filename
+// straight from the DOM rather than from a build-time constant baked into the
+// bundle: a constant baked in at build time would itself be part of the very
+// bundle we're trying to detect as stale, so it can only ever describe what
+// build the tab shipped WITH, which is exactly what we need to compare
+// against the server's `ready.bundle` — but reading the live DOM (rather than
+// import.meta.env or similar) means zero build-config coupling and zero risk
+// of the two going out of sync, which a hand-maintained constant cannot
+// promise (this file's neighbors, e.g. the cache-header fix above, exist
+// precisely because a "just remember to bump it" scheme rotted). Note
+// `document.currentScript` is unusable here — the spec returns null for
+// `<script type="module">`, which is what vite's build emits — so this
+// queries the DOM for the script tag directly instead.
+function ownBundleFingerprint(): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  for (const el of document.querySelectorAll('script[src]')) {
+    const src = el.getAttribute('src') ?? '';
+    const match = src.match(/\/?(index-[^/?#"]+\.m?js)(?:[?#].*)?$/);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+// Set right before the ONE automatic reload this tab will ever attempt for a
+// bundle mismatch, and read on every subsequent 'ready' frame. This is what
+// makes the reload attempt-once instead of loop-forever: sessionStorage
+// survives a same-tab reload (unlike component state) but not a fresh
+// tab/session, so a genuinely still-mismatched bundle after the reload (two
+// deploys landing back to back, or a build that somehow never updates) falls
+// straight through to the persistent banner instead of reloading again.
+const BUNDLE_RELOAD_ATTEMPTED_KEY = 'nanoclaw_bundle_reload_attempted';
+
+function hasAlreadyAttemptedBundleReload(): boolean {
+  try {
+    return sessionStorage.getItem(BUNDLE_RELOAD_ATTEMPTED_KEY) === '1';
+  } catch {
+    // No sessionStorage (private mode, storage disabled) means no way to
+    // guarantee a second attempt won't loop — fail safe toward the banner
+    // rather than risk reloading forever.
+    return true;
+  }
+}
+
+function markBundleReloadAttempted(): void {
+  try {
+    sessionStorage.setItem(BUNDLE_RELOAD_ATTEMPTED_KEY, '1');
+  } catch {
+    /* best-effort; hasAlreadyAttemptedBundleReload() fails safe if this silently no-ops */
+  }
+}
+
 const TOKEN_KEY = 'nanoclaw_web_token';
 
 function readToken(): string | null {
@@ -175,6 +233,14 @@ export interface NanoclawState {
   items: ConversationItem[];
   typing: boolean;
   authError: boolean;
+  /**
+   * P2b: true once this tab has seen the server report a `bundle` that
+   * doesn't match its own and has already spent its one automatic reload
+   * attempt on it — i.e. the persistent "reload to catch up" banner should
+   * show. Never true on a server that omits `bundle` (backward compat) or on
+   * the very first mismatch (that one reloads automatically instead).
+   */
+  bundleStale: boolean;
   login: (token: string) => void;
   sendMessage: (text: string) => void;
   chooseOption: (questionId: string, index: number) => void;
@@ -187,6 +253,7 @@ export function useNanoclaw(): NanoclawState {
   const [items, setItems] = useState<ConversationItem[]>([]);
   const [typing, setTyping] = useState(false);
   const [authError, setAuthError] = useState(false);
+  const [bundleStale, setBundleStale] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -313,6 +380,27 @@ export function useNanoclaw(): NanoclawState {
             // ghost-typing fix's other half (see types.ts ReadyFrame.typing
             // and web.ts's ready-frame send).
             applyTyping(frame.typing);
+
+            // P2b stale-bundle check. `frame.bundle` absent (old server) or
+            // ownBundleFingerprint() unreadable (can't identify our own
+            // script tag) both mean "nothing to compare" — do nothing, per
+            // the backward-compat contract. A match means this tab is
+            // current — clear any stale banner a PRIOR mismatched connection
+            // on this same hook instance might have set.
+            if (frame.bundle) {
+              const own = ownBundleFingerprint();
+              if (own && frame.bundle !== own) {
+                if (hasAlreadyAttemptedBundleReload()) {
+                  setBundleStale(true);
+                } else {
+                  markBundleReloadAttempted();
+                  window.location.reload();
+                  return; // reloading imminently — no point applying more state
+                }
+              } else {
+                setBundleStale(false);
+              }
+            }
             break;
           case 'typing':
             applyTyping(frame.on);
@@ -448,6 +536,7 @@ export function useNanoclaw(): NanoclawState {
     items,
     typing,
     authError,
+    bundleStale,
     login,
     sendMessage,
     chooseOption,

@@ -12,14 +12,20 @@
  * Run:  NANOCLAW_WEB_TOKEN=<tok> tsx scripts/web-channel-harness.ts [eventLogPath]
  *
  * Env:
- *   NANOCLAW_WEB_TOKEN  shared token the browser must present (required here)
- *   NANOCLAW_WEB_PORT   listen port (default 7890)
- *   WEB_HARNESS_DATADIR scratch data dir (default ./.harness-data)
+ *   NANOCLAW_WEB_TOKEN          shared token the browser must present (required here)
+ *   NANOCLAW_WEB_PORT           listen port (default 7890)
+ *   WEB_HARNESS_DATADIR         scratch data dir (default ./.harness-data)
+ *   NANOCLAW_WEB_BUNDLE_OVERRIDE  P2b test knob: forces the `bundle` value the
+ *     adapter reports in its `ready` frame instead of computing it from the
+ *     real served dist/index.html. The literal value `__omit__` forces the
+ *     field to be omitted entirely (simulates a pre-P2b server for
+ *     backward-compat proofs). Unset (the default) uses the real computation
+ *     — see scripts/browser-proof-bundle-mismatch.mjs for how this is used.
  */
 import fs from 'fs';
 import path from 'path';
 
-import { createWebAdapter } from '../src/channels/web.js';
+import { createWebAdapter, type WebChannelOptions } from '../src/channels/web.js';
 import type { ChannelSetup, InboundMessage, OutboundFile } from '../src/channels/adapter.js';
 import { type RawOption } from '../src/channels/ask-question.js';
 
@@ -285,7 +291,18 @@ async function main() {
     process.exit(1);
   }
   const dataDir = process.env.WEB_HARNESS_DATADIR ?? path.join(process.cwd(), '.harness-data');
-  const adapter = createWebAdapter({ dataDir });
+
+  // P2b test knob (see the file header): only set the `bundleOverride` key at
+  // all when the env var is present — createWebAdapter distinguishes "key
+  // absent" (use the real computed fingerprint) from "key present as null"
+  // (omit the field entirely), so this must not pass `bundleOverride:
+  // undefined` unconditionally.
+  const rawBundleOverride = process.env.NANOCLAW_WEB_BUNDLE_OVERRIDE;
+  const adapterOptions: WebChannelOptions = { dataDir };
+  if (rawBundleOverride !== undefined) {
+    adapterOptions.bundleOverride = rawBundleOverride === '__omit__' ? null : rawBundleOverride;
+  }
+  const adapter = createWebAdapter(adapterOptions);
   deliver = adapter.deliver.bind(adapter);
   setTyping = adapter.setTyping!.bind(adapter);
 

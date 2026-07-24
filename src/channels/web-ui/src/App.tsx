@@ -3,6 +3,7 @@ import { TopBar } from './components/TopBar';
 import { Login } from './components/Login';
 import { Conversation } from './components/Conversation';
 import { PromptInput } from './components/PromptInput';
+import { UpdateBanner } from './components/UpdateBanner';
 
 export default function App() {
   const {
@@ -12,6 +13,7 @@ export default function App() {
     items,
     typing,
     authError,
+    bundleStale,
     login,
     sendMessage,
     chooseOption,
@@ -35,6 +37,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col bg-zinc-950">
       <TopBar status={status} />
+      {bundleStale && <UpdateBanner onReload={() => window.location.reload()} />}
       <Conversation
         items={items}
         typing={typing}
