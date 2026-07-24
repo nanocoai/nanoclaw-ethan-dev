@@ -20,6 +20,18 @@ function harnessPid() {
   return fs.readFileSync(`${DATADIR}/harness.pid`, 'utf8').trim();
 }
 
+// EXACT match, not .includes(): 'disconnected' contains 'connected' as a
+// literal substring, so a naive .includes('connected') resolves true even
+// while still disconnected — the same latent false positive documented in
+// browser-proof-typing-ghost.mjs's waitForStatus helper, copied here.
+async function waitForStatus(page, status, timeout = 10000) {
+  await page.waitForFunction(
+    (want) => document.querySelector('[data-testid="connection-status"]')?.textContent?.trim() === want,
+    status,
+    { timeout },
+  );
+}
+
 async function main() {
   const browser = await chromium.launch({
     executablePath: CHROME,
@@ -36,10 +48,7 @@ async function main() {
   await page.goto(`http://127.0.0.1:${PORT}/?token=${encodeURIComponent(TOKEN)}`, {
     waitUntil: 'networkidle',
   });
-  await page.waitForFunction(
-    () => document.querySelector('[data-testid="connection-status"]')?.textContent?.includes('connected'),
-    { timeout: 10000 },
-  );
+  await waitForStatus(page, 'connected', 10000);
   console.log('OK   SPA connected (first connection)');
 
   // Build up some state: a generic card and a plain markdown/approval exchange.
@@ -65,17 +74,11 @@ async function main() {
 
   // The client should notice the drop (status flips off 'connected') and
   // then, after its backoff, come back.
-  await page.waitForFunction(
-    () => document.querySelector('[data-testid="connection-status"]')?.textContent?.includes('disconnected'),
-    { timeout: 10000 },
-  );
+  await waitForStatus(page, 'disconnected', 10000);
   console.log('OK   client detected the drop (status: disconnected)');
   await page.screenshot({ path: `${SHOTS}/p1-reconnect-disconnected.png`, fullPage: true });
 
-  await page.waitForFunction(
-    () => document.querySelector('[data-testid="connection-status"]')?.textContent?.includes('connected'),
-    { timeout: 20000 },
-  );
+  await waitForStatus(page, 'connected', 20000);
   console.log('OK   client reconnected (status: connected)');
   await page.waitForTimeout(300);
 
