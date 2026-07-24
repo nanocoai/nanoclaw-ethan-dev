@@ -3,6 +3,8 @@ import clsx from 'clsx';
 import type { ChatFile } from '../types';
 import { formatBytes } from '../format';
 import { Timestamp } from './Timestamp';
+import { detectInlineKind, INLINE_MAX_BYTES } from '../inline-view';
+import { InlineFileViewer } from './InlineFileViewer';
 
 /** Appends the shared token the same way the WS connection does — a plain `?token=` query param. */
 function withToken(downloadPath: string, token: string): string {
@@ -22,6 +24,7 @@ function withToken(downloadPath: string, token: string): string {
  */
 export function AttachmentRow({ file, token }: { file: ChatFile; token: string | null }) {
   const [unavailable, setUnavailable] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const isUser = file.role === 'user';
 
   // Malformed/unknown file frame (missing the fields we need to render or
@@ -42,6 +45,12 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
   if (!token) return null; // no session token yet — nothing to authenticate a download with
   const href = withToken(file.downloadPath, token);
   const isImage = file.mime.startsWith('image/');
+  // Inline "open file" (md-bui-style): markdown/code/text under ~1MB gets a
+  // toggle to expand it inline; images are already inline (above) and never
+  // reach here; PDFs and unknown binaries get no inline offer at all — same
+  // download card (and an explicit "open in new tab") as before this feature.
+  const inlineKind = detectInlineKind(file.name, file.mime);
+  const canInline = inlineKind !== 'none' && file.size <= INLINE_MAX_BYTES;
 
   if (unavailable) {
     return (
@@ -97,57 +106,96 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
   // the border/background for the same treatment Message.tsx gives a user
   // text bubble, so an uploaded file reads as "the same side" as the user's
   // own messages.
+  //
+  // The inline-view toggle is a SEPARATE sibling button, not folded into
+  // this one: `[data-testid="attachment-file"]` and its onClick (download)
+  // are left byte-for-byte as they were before this feature, so the existing
+  // golden proof (browser-proof-attachment.mjs, which clicks this exact
+  // testid expecting a download) keeps working unchanged even for a file
+  // that's now ALSO inline-eligible (e.g. the "send doc file" .txt fixture).
   return (
     <div
       className={clsx('nano-fade-in flex w-full flex-col px-4 py-2', isUser && 'items-end')}
       data-testid="attachment-row"
       data-role={file.role}
     >
-      <button
-        type="button"
-        data-testid="attachment-file"
-        data-name={file.name}
-        onClick={async () => {
-          try {
-            const res = await fetch(href);
-            if (!res.ok) {
+      <div className="flex w-full max-w-[80%] items-center gap-2">
+        <button
+          type="button"
+          data-testid="attachment-file"
+          data-name={file.name}
+          onClick={async () => {
+            try {
+              const res = await fetch(href);
+              if (!res.ok) {
+                setUnavailable(true);
+                return;
+              }
+              const blob = await res.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = blobUrl;
+              a.download = file.name;
+              a.click();
+              URL.revokeObjectURL(blobUrl);
+            } catch {
               setUnavailable(true);
-              return;
             }
-            const blob = await res.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = blobUrl;
-            a.download = file.name;
-            a.click();
-            URL.revokeObjectURL(blobUrl);
-          } catch {
-            setUnavailable(true);
-          }
-        }}
-        className={clsx(
-          'flex w-full max-w-[80%] items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-colors',
-          isUser
-            ? 'border-zinc-700/60 bg-zinc-800/70 hover:bg-zinc-800'
-            : 'border-zinc-800 bg-zinc-900/70 hover:bg-zinc-900',
+          }}
+          className={clsx(
+            'flex min-w-0 flex-1 items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-colors',
+            isUser
+              ? 'border-zinc-700/60 bg-zinc-800/70 hover:bg-zinc-800'
+              : 'border-zinc-800 bg-zinc-900/70 hover:bg-zinc-900',
+          )}
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400">
+            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+              <path d="M6 2.5h5.5L15 6v11.5H6z" />
+              <path d="M11.5 2.5V6H15" />
+            </svg>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[15px] text-zinc-100" data-testid="attachment-file-name">
+              {file.name}
+            </div>
+            <div className="text-xs text-zinc-500" data-testid="attachment-file-size">
+              {formatBytes(file.size)}
+            </div>
+          </div>
+          <span className="shrink-0 text-xs font-medium text-indigo-400">download</span>
+        </button>
+
+        {canInline && (
+          <button
+            type="button"
+            data-testid="attachment-view-toggle"
+            aria-label={expanded ? 'collapse file preview' : 'view file inline'}
+            onClick={() => setExpanded((e) => !e)}
+            className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-3 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-900"
+          >
+            {expanded ? 'collapse' : 'view'}
+          </button>
         )}
-      >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400">
-          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-            <path d="M6 2.5h5.5L15 6v11.5H6z" />
-            <path d="M11.5 2.5V6H15" />
-          </svg>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] text-zinc-100" data-testid="attachment-file-name">
-            {file.name}
-          </div>
-          <div className="text-xs text-zinc-500" data-testid="attachment-file-size">
-            {formatBytes(file.size)}
-          </div>
-        </div>
-        <span className="shrink-0 text-xs font-medium text-indigo-400">download</span>
-      </button>
+
+        {!canInline && (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="attachment-open-newtab"
+            aria-label="open in a new tab"
+            className="shrink-0 rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-3 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-900"
+          >
+            open ↗
+          </a>
+        )}
+      </div>
+
+      {expanded && canInline && (
+        <InlineFileViewer downloadHref={href} kind={inlineKind} filename={file.name} onCollapse={() => setExpanded(false)} />
+      )}
+
       <Timestamp ts={file.ts} className="mt-1" />
     </div>
   );

@@ -47,6 +47,21 @@ const DEMO_PNG_BASE64 =
 const DEMO_PNG = Buffer.from(DEMO_PNG_BASE64, 'base64');
 const DEMO_DOC = Buffer.from('hello from the agent — this is a plain text attachment\n', 'utf8');
 
+// Inline-viewer proof fixtures (commit 3). A markdown file (renders through
+// the same Markdown component assistant messages use), a small code file
+// (line-numbered monospace viewer), and a file deliberately just over the
+// 1MB inline-eligibility cap (INLINE_MAX_BYTES, inline-view.ts) — proving
+// the size gate, not just the extension/mime gate.
+const DEMO_MARKDOWN = Buffer.from(
+  ['# release notes', '', 'This is **markdown** rendered inline.', '', '- item one', '- item two'].join('\n') + '\n',
+  'utf8',
+);
+const DEMO_CODE = Buffer.from(
+  ['def greet(name):', '    print(f"hello, {name}")', '', 'greet("nanoclaw")', ''].join('\n'),
+  'utf8',
+);
+const DEMO_BIG_FILE = Buffer.from('x'.repeat(1024 * 1024 + 1024), 'utf8'); // just over 1MB
+
 const eventLogPath =
   process.argv[2] ?? path.join(process.cwd(), '.harness-data', 'events.jsonl');
 fs.mkdirSync(path.dirname(eventLogPath), { recursive: true });
@@ -193,6 +208,39 @@ const setup: ChannelSetup = {
         files: [{ filename: 'notes.txt', data: DEMO_DOC }],
       });
       record('fileDelivered', { messageId, filename: 'notes.txt' });
+      return;
+    }
+
+    if (text === 'send markdown file') {
+      const messageId = await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: {},
+        files: [{ filename: 'README.md', data: DEMO_MARKDOWN }],
+      });
+      record('fileDelivered', { messageId, filename: 'README.md' });
+      return;
+    }
+
+    if (text === 'send code file') {
+      const messageId = await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: {},
+        files: [{ filename: 'greet.py', data: DEMO_CODE }],
+      });
+      record('fileDelivered', { messageId, filename: 'greet.py' });
+      return;
+    }
+
+    if (text === 'send big file') {
+      // Just over INLINE_MAX_BYTES (1MB) — must render as a plain download
+      // card with NO inline-view toggle at all, regardless of its .txt
+      // extension (which would otherwise be inline-eligible).
+      const messageId = await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: {},
+        files: [{ filename: 'huge-log.txt', data: DEMO_BIG_FILE }],
+      });
+      record('fileDelivered', { messageId, filename: 'huge-log.txt', size: DEMO_BIG_FILE.length });
       return;
     }
 
