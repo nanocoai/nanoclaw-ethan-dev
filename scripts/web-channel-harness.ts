@@ -100,6 +100,36 @@ const setup: ChannelSetup = {
       return;
     }
 
+    if (text === 'edit test') {
+      // Deliver a message, then edit it in place — mirrors an approval
+      // expiring (onecli-approvals.ts editCardExpired: deliver() an
+      // operation:'edit' against the messageId the earlier deliver() call
+      // returned).
+      const messageId = await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: { markdown: 'Original message — about to be edited.' },
+      });
+      record('editTargetDelivered', { messageId });
+      await new Promise((r) => setTimeout(r, 300));
+      await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: { operation: 'edit', messageId, text: 'Edited in place — the original text is gone.' },
+      });
+      record('editApplied', { messageId });
+      return;
+    }
+
+    if (text === 'edit unknown') {
+      // Edit targeting an id the adapter never delivered — the SPA must
+      // append it rather than drop it.
+      await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: { operation: 'edit', messageId: 'never-delivered-id', text: 'Edit for an id nobody has seen.' },
+      });
+      record('editForUnknownIdApplied', {});
+      return;
+    }
+
     // Play host: acknowledge with a rich markdown message, then an approval card.
     await setTyping(PLATFORM_ID, null);
     await new Promise((r) => setTimeout(r, 350));

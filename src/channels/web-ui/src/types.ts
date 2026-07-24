@@ -76,7 +76,28 @@ export interface GenericCardFrame {
   fallbackText: string;
 }
 
-export type ServerFrame = ReadyFrame | TypingFrame | MessageFrame | CardFrame | CardResolvedFrame | GenericCardFrame;
+/**
+ * In-place edit of a previously delivered message or card — mirrors the
+ * Chat SDK bridge's operation:'edit' (e.g. an approval expiring in place).
+ * `id` is unscoped over both plain messages and cards: whichever
+ * conversation item carries that id gets replaced with a plain assistant
+ * message showing `content`. An unknown id (nothing in the conversation has
+ * it) gets appended instead of dropped.
+ */
+export interface EditFrame {
+  type: 'edit';
+  id: string;
+  content: string;
+}
+
+export type ServerFrame =
+  | ReadyFrame
+  | TypingFrame
+  | MessageFrame
+  | CardFrame
+  | CardResolvedFrame
+  | GenericCardFrame
+  | EditFrame;
 
 // ---- Client -> server frames ----
 

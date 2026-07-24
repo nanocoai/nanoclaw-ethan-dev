@@ -145,6 +145,12 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   // host's getAskQuestionRender DB read).
   const renderStore = new Map<string, { title: string; options: NormalizedOption[]; messageId: string }>();
 
+  // Every message/card id this adapter has handed back from deliver(), so an
+  // operation:'edit' targeting an id we never produced can at least be logged
+  // — the host is the source of truth for which id it stored, this is just a
+  // sanity check on our side.
+  const deliveredMessageIds = new Set<string>();
+
   let seq = 0;
   const nextId = (prefix: string) => `${prefix}-${Date.now()}-${(seq++).toString(36)}`;
 
@@ -332,6 +338,21 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       if (platformId !== PLATFORM_ID) return undefined;
       const content = (message.content ?? {}) as Record<string, unknown>;
 
+      // In-place edit of a previously delivered message/card — mirrors the
+      // Chat SDK bridge's operation:'edit' handling (chat-sdk-bridge.ts
+      // deliver(), content.operation === 'edit' branch). The host is the one
+      // tracking messageId (it stores whatever deliver() returned); we just
+      // forward the new text under that id.
+      if (content.operation === 'edit' && content.messageId) {
+        const messageId = content.messageId as string;
+        const text = (content.text as string) || (content.markdown as string) || '';
+        if (!deliveredMessageIds.has(messageId)) {
+          log.warn('Editing a message id this adapter never delivered — forwarding anyway', { messageId });
+        }
+        broadcast({ type: 'edit', id: messageId, content: text });
+        return undefined;
+      }
+
       // Approval / interactive card.
       if (content.type === 'ask_question' && content.questionId && content.options) {
         const questionId = content.questionId as string;
@@ -343,6 +364,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         }
         const options = normalizeOptions(content.options as never);
         const messageId = nextId('card');
+        deliveredMessageIds.add(messageId);
         renderStore.set(questionId, { title, options, messageId });
         broadcast({
           type: 'card',
@@ -414,6 +436,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
             // silently dropping the delivery (deliberate divergence from the
             // bridge, which drops here unconditionally).
             const messageId = nextId('msg');
+            deliveredMessageIds.add(messageId);
             broadcast({ type: 'message', id: messageId, role: 'assistant', content: fallbackText });
             return messageId;
           }
@@ -422,6 +445,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         }
 
         const messageId = nextId('gcard');
+        deliveredMessageIds.add(messageId);
         broadcast({ type: 'generic_card', id: messageId, title, body, links, fallbackText });
         return messageId;
       }
@@ -434,6 +458,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       const text = (content.markdown as string) || (content.text as string);
       if (text) {
         const messageId = nextId('msg');
+        deliveredMessageIds.add(messageId);
         broadcast({ type: 'message', id: messageId, role: 'assistant', content: text });
         return messageId;
       }

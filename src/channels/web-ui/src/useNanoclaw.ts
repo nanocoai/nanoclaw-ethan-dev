@@ -1,5 +1,70 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ConnectionStatus, ConversationItem, ServerFrame } from './types';
+import type { ChatMessage, ConnectionStatus, ConversationItem, ServerFrame } from './types';
+
+/**
+ * Pure reducer applying one server frame to the conversation. Used both for
+ * live frames as they arrive and (see the 'history' case, item 3) to rebuild
+ * the whole conversation from a replayed frame log on reconnect — so both
+ * paths agree on what a card_resolved or edit does to the item list.
+ */
+function applyServerFrame(items: ConversationItem[], frame: ServerFrame): ConversationItem[] {
+  switch (frame.type) {
+    case 'message':
+      return [...items, { kind: 'message', id: frame.id, role: 'assistant', content: frame.content }];
+    case 'card':
+      return [
+        ...items,
+        {
+          kind: 'card',
+          id: frame.id,
+          questionId: frame.questionId,
+          title: frame.title,
+          question: frame.question,
+          options: frame.options,
+          pending: false,
+        },
+      ];
+    case 'generic_card':
+      return [
+        ...items,
+        {
+          kind: 'generic_card',
+          id: frame.id,
+          title: frame.title,
+          body: frame.body,
+          links: frame.links,
+          fallbackText: frame.fallbackText,
+        },
+      ];
+    case 'card_resolved':
+      return items.map((item) =>
+        item.kind === 'card' && item.questionId === frame.questionId
+          ? {
+              ...item,
+              pending: false,
+              resolution: {
+                selectedIndex: frame.selectedIndex,
+                selectedLabel: frame.selectedLabel,
+                actor: frame.actor,
+              },
+            }
+          : item,
+      );
+    case 'edit': {
+      // Replace whichever message or card carries this id with a plain
+      // assistant message showing the edited content. An id we don't know
+      // about gets appended rather than dropped.
+      const index = items.findIndex((item) => item.id === frame.id);
+      const edited: ChatMessage = { kind: 'message', id: frame.id, role: 'assistant', content: frame.content };
+      if (index === -1) return [...items, edited];
+      const next = items.slice();
+      next[index] = edited;
+      return next;
+    }
+    default:
+      return items;
+  }
+}
 
 const TOKEN_KEY = 'nanoclaw_web_token';
 
@@ -98,59 +163,11 @@ export function useNanoclaw(): NanoclawState {
           setTyping(frame.on);
           break;
         case 'message':
-          setItems((prev) => [
-            ...prev,
-            {
-              kind: 'message',
-              id: frame.id,
-              role: 'assistant',
-              content: frame.content,
-            },
-          ]);
-          break;
         case 'card':
-          setItems((prev) => [
-            ...prev,
-            {
-              kind: 'card',
-              id: frame.id,
-              questionId: frame.questionId,
-              title: frame.title,
-              question: frame.question,
-              options: frame.options,
-              pending: false,
-            },
-          ]);
-          break;
         case 'generic_card':
-          setItems((prev) => [
-            ...prev,
-            {
-              kind: 'generic_card',
-              id: frame.id,
-              title: frame.title,
-              body: frame.body,
-              links: frame.links,
-              fallbackText: frame.fallbackText,
-            },
-          ]);
-          break;
         case 'card_resolved':
-          setItems((prev) =>
-            prev.map((item) =>
-              item.kind === 'card' && item.questionId === frame.questionId
-                ? {
-                    ...item,
-                    pending: false,
-                    resolution: {
-                      selectedIndex: frame.selectedIndex,
-                      selectedLabel: frame.selectedLabel,
-                      actor: frame.actor,
-                    },
-                  }
-                : item,
-            ),
-          );
+        case 'edit':
+          setItems((prev) => applyServerFrame(prev, frame));
           break;
       }
     };
