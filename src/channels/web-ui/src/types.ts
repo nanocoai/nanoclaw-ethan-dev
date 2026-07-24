@@ -31,11 +31,19 @@ export interface TypingFrame {
   on: boolean;
 }
 
+// `seq` is a monotonically increasing frame counter stamped server-side
+// (web.ts emit()) on every frame that gets recorded into replay history —
+// everything below except TypingFrame/ReadyFrame/HistoryFrame itself. The
+// client reducer uses it to merge a replayed 'history' snapshot with
+// whatever it already applied live, instead of a destructive overwrite —
+// see useNanoclaw.ts applyServerFrame / mergeHistoryFrames.
+
 export interface MessageFrame {
   type: 'message';
   id: string;
   role: 'assistant';
   content: string;
+  seq: number;
 }
 
 export interface CardFrame {
@@ -45,6 +53,7 @@ export interface CardFrame {
   title: string;
   question: string;
   options: CardOption[];
+  seq: number;
 }
 
 export interface CardResolvedFrame {
@@ -53,6 +62,7 @@ export interface CardResolvedFrame {
   selectedIndex: number;
   selectedLabel: string;
   actor: string;
+  seq: number;
 }
 
 /** A link-style action on a generic card — opens a URL, never round-trips. */
@@ -74,6 +84,7 @@ export interface GenericCardFrame {
   body: string[];
   links: CardLink[];
   fallbackText: string;
+  seq: number;
 }
 
 /**
@@ -88,6 +99,7 @@ export interface EditFrame {
   type: 'edit';
   id: string;
   content: string;
+  seq: number;
 }
 
 export type ServerFrame =

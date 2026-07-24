@@ -162,6 +162,20 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   let seq = 0;
   const nextId = (prefix: string) => `${prefix}-${Date.now()}-${(seq++).toString(36)}`;
 
+  // Monotonic sequence stamped on every RECORDED frame (see emit() below) —
+  // separate from the id counter above, which also numbers frames that never
+  // go through emit() (e.g. card_resolved shares nextId's messageId space
+  // indirectly via renderStore, not directly). The client uses this to merge
+  // a replayed history snapshot with whatever it already applied live
+  // instead of blindly overwriting: reconnect (subscribe, i.e. clients.add())
+  // happens before the snapshot is read below, so no frame recorded from
+  // this point on can be missed by broadcast — but the reverse isn't free:
+  // nothing stops a client from applying a live frame and THEN receiving a
+  // history snapshot that predates it (a slower snapshot build, a future
+  // change that adds an await here, a retried/duplicated send). seq is the
+  // client's defense against that: idempotent, order-tolerant replay.
+  let frameSeq = 0;
+
   function broadcast(frame: Record<string, unknown>): void {
     const data = JSON.stringify(frame);
     for (const ws of clients) {
@@ -175,8 +189,17 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     }
   }
 
-  /** Broadcast a frame AND append it to the replay history. */
+  /**
+   * Record a frame into the replay history AND broadcast it — in that order,
+   * unconditionally, regardless of whether any client is currently connected.
+   * This is what makes deliver() safe to call with zero clients: the answer
+   * still lands in `history` for whoever reconnects later, even though
+   * broadcast() has nobody to send it to right now. Every recorded frame
+   * gets a monotonically increasing `seq` first, so a client that replays
+   * `history` can tell exactly which live frames it already has.
+   */
   function emit(frame: Record<string, unknown>): void {
+    frame.seq = ++frameSeq;
     history.push(frame);
     if (history.length > HISTORY_LIMIT) history.shift();
     broadcast(frame);
@@ -302,6 +325,14 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           return;
         }
         wss!.handleUpgrade(req, socket, head, (ws) => {
+          // Subscribe BEFORE reading the snapshot: this client is a
+          // broadcast target from this line on, so any deliver() that lands
+          // from this point forward reaches it live (no gap where a frame
+          // could be neither in the snapshot below nor delivered live). The
+          // ordering only holds because nothing between here and the two
+          // ws.send() calls below awaits — if that ever changes, the seq
+          // numbers stamped in emit() are the fallback the client reducer
+          // relies on to merge instead of silently losing the overlap.
           clients.add(ws);
           log.info('Web client connected', { clients: clients.size });
           // Replay everything we remember BEFORE 'ready', so the SPA rebuilds

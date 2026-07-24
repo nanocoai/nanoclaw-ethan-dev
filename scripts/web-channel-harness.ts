@@ -131,8 +131,13 @@ const setup: ChannelSetup = {
     }
 
     // Play host: acknowledge with a rich markdown message, then an approval card.
+    // Delays are env-overridable (default 350/150ms) so a proof can stretch the
+    // in-flight-turn window wide enough for a real browser page.reload() cycle
+    // to land reliably mid-turn (see browser-proof-refresh-mid-turn.mjs).
+    const typingDelayMs = Number(process.env.HARNESS_TYPING_DELAY_MS ?? 350);
+    const cardDelayMs = Number(process.env.HARNESS_CARD_DELAY_MS ?? 150);
     await setTyping(PLATFORM_ID, null);
-    await new Promise((r) => setTimeout(r, 350));
+    await new Promise((r) => setTimeout(r, typingDelayMs));
 
     const markdown = [
       '### deploy summary',
@@ -152,7 +157,7 @@ const setup: ChannelSetup = {
     ].join('\n');
     await deliver(PLATFORM_ID, null, { kind: 'chat-sdk', content: { markdown } });
 
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, cardDelayMs));
 
     // The exact payload core delivers (primitive.ts requestApproval()).
     const questionId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

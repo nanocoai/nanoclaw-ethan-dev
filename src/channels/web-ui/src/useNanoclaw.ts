@@ -66,6 +66,32 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
   }
 }
 
+/** Frame types that carry a `seq` (everything emit()-recorded server-side). */
+type SeqFrame = Exclude<ServerFrame, { type: 'ready' } | { type: 'typing' } | { type: 'history' }>;
+
+function hasSeq(frame: ServerFrame): frame is SeqFrame {
+  return frame.type !== 'ready' && frame.type !== 'typing' && frame.type !== 'history';
+}
+
+/**
+ * Merge a replayed 'history' snapshot with whatever seq-bearing frames this
+ * connection already applied live. A plain wholesale replace (just
+ * `frame.frames.reduce(applyServerFrame, [])`) is NOT safe: if a live frame
+ * arrived and was applied before a 'history' snapshot that predates it shows
+ * up — a slower snapshot build, a future await added to the connect
+ * handshake, a resent/duplicated history frame — that live frame would be
+ * silently wiped. Merging by seq (union, sorted, de-duped) makes replay
+ * idempotent regardless of arrival order: this is what
+ * scripts/repro-history-replace-race.mjs proves the pre-seq reducer gets
+ * wrong, and what it proves this merge gets right.
+ */
+function mergeHistoryFrames(alreadyApplied: SeqFrame[], replayed: ServerFrame[]): SeqFrame[] {
+  const bySeq = new Map<number, SeqFrame>();
+  for (const frame of alreadyApplied) bySeq.set(frame.seq, frame);
+  for (const frame of replayed) if (hasSeq(frame)) bySeq.set(frame.seq, frame);
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+}
+
 const TOKEN_KEY = 'nanoclaw_web_token';
 
 function readToken(): string | null {
@@ -113,6 +139,13 @@ export function useNanoclaw(): NanoclawState {
   const [authError, setAuthError] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Every seq-bearing frame this hook instance has ever applied (live or via
+  // a history replay), kept sorted by seq — the merge baseline for the next
+  // 'history' frame (see mergeHistoryFrames) and the dedupe source for live
+  // frames, so replay and live delivery overlapping is always idempotent.
+  const frameLogRef = useRef<SeqFrame[]>([]);
+  const seenSeqsRef = useRef<Set<number>>(new Set());
 
   // Bootstrap the token exactly once: URL ?token= wins, then localStorage.
   // A URL token is persisted and then stripped from the visible address.
@@ -176,16 +209,27 @@ export function useNanoclaw(): NanoclawState {
           case 'typing':
             setTyping(frame.on);
             break;
-          case 'history':
-            // Rebuild the whole conversation from the replay log instead of
-            // appending to whatever was left over from before the drop.
-            setItems(frame.frames.reduce(applyServerFrame, [] as ConversationItem[]));
+          case 'history': {
+            // Merge the replay log with whatever this connection already
+            // applied live instead of a destructive wholesale replace — see
+            // mergeHistoryFrames for why a plain overwrite can lose a live
+            // frame that outran the snapshot.
+            const merged = mergeHistoryFrames(frameLogRef.current, frame.frames);
+            frameLogRef.current = merged;
+            seenSeqsRef.current = new Set(merged.map((f) => f.seq));
+            setItems(merged.reduce(applyServerFrame, [] as ConversationItem[]));
             break;
+          }
           case 'message':
           case 'card':
           case 'generic_card':
           case 'card_resolved':
           case 'edit':
+            // Idempotent on seq: a frame already folded in (live, or via an
+            // earlier history merge) is a no-op rather than a duplicate.
+            if (seenSeqsRef.current.has(frame.seq)) break;
+            seenSeqsRef.current.add(frame.seq);
+            frameLogRef.current = [...frameLogRef.current, frame];
             setItems((prev) => applyServerFrame(prev, frame));
             break;
         }
@@ -239,6 +283,8 @@ export function useNanoclaw(): NanoclawState {
     storeToken(trimmed);
     setAuthError(false);
     setItems([]);
+    frameLogRef.current = [];
+    seenSeqsRef.current = new Set();
     setTyping(false);
     setToken(trimmed);
   }, []);
