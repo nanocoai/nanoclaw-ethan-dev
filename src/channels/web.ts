@@ -33,7 +33,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 
 import { log } from '../log.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
-import type { ChannelAdapter, ChannelDefaults, ChannelSetup, OutboundMessage } from './adapter.js';
+import type { ChannelAdapter, ChannelDefaults, ChannelSetup, OutboundFile, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 
 const CHANNEL_TYPE = 'web';
@@ -78,6 +78,60 @@ const CONTENT_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.map': 'application/json; charset=utf-8',
 };
+
+// P2a outbound attachments. OutboundFile (adapter.ts) carries only
+// `{ filename, data }` — no mime type — so it's derived here from the
+// extension. Anything not in this table serves as application/octet-stream:
+// a deliberately safe default (never lets an attachment's filename extension
+// (e.g. a model-authored .html/.svg) get inline-rendered as a browser
+// document; the SPA only ever treats `image/*` specially, see
+// components/AttachmentRow.tsx).
+const ATTACHMENT_MIME_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.pdf': 'application/pdf',
+  '.json': 'application/json',
+  '.txt': 'text/plain',
+  '.md': 'text/plain',
+  '.csv': 'text/csv',
+  '.log': 'text/plain',
+  '.zip': 'application/zip',
+};
+
+function mimeForFilename(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  return ATTACHMENT_MIME_TYPES[ext] ?? 'application/octet-stream';
+}
+
+/**
+ * RFC 6266-ish Content-Disposition: a quoted-string fallback (backslash/quote
+ * escaped) plus a UTF-8 `filename*` for names outside ASCII — good enough for
+ * the browsers this single-user demo actually needs to support.
+ */
+function contentDispositionHeader(filename: string): string {
+  const quoted = filename.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const encoded = encodeURIComponent(filename).replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16)}`);
+  return `attachment; filename="${quoted}"; filename*=UTF-8''${encoded}`;
+}
+
+/** One outbound file, registered under an opaque random id. Never a filesystem path — `data` is the buffer OutboundFile already carries in memory. */
+interface RegisteredFile {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+  data: Buffer;
+}
+
+// Bounded like the history ring (HISTORY_LIMIT below): evict the OLDEST file
+// once either cap is exceeded. An evicted id answers 410 Gone (it existed,
+// it's just gone) rather than 404 (never existed) — the SPA tells the two
+// apart (AttachmentRow.tsx "no longer available" state, either way).
+const FILE_COUNT_LIMIT = 50;
+const FILE_BYTES_LIMIT = 100 * 1024 * 1024;
 
 /**
  * Resolve a clicked button back to its option value. Copied verbatim from
@@ -181,6 +235,57 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   const HISTORY_LIMIT = 200;
   const history: Record<string, unknown>[] = [];
 
+  // P2a outbound attachments: id -> bytes. `files` is a Map so insertion
+  // order IS FIFO eviction order (see evictOldestFilesIfNeeded). Cleared on
+  // teardown (unlike `history`, which deliberately survives a
+  // teardown()+setup() bounce) — a torn-down file map has nobody left to
+  // serve /files/<id> until setup() runs again anyway, so the ids get marked
+  // evicted (410, not 404) rather than silently becoming 404s.
+  const files = new Map<string, RegisteredFile>();
+  const evictedFileIds = new Set<string>();
+  let filesTotalBytes = 0;
+
+  function evictOldestFilesIfNeeded(): void {
+    while (files.size > FILE_COUNT_LIMIT || filesTotalBytes > FILE_BYTES_LIMIT) {
+      const oldestId: string | undefined = files.keys().next().value;
+      if (oldestId === undefined) break;
+      const oldest = files.get(oldestId);
+      files.delete(oldestId);
+      if (oldest) filesTotalBytes -= oldest.size;
+      evictedFileIds.add(oldestId);
+    }
+  }
+
+  /**
+   * Register one outbound file for HTTP download. Returns null (never
+   * throws) for anything unservable — no filename, no data, or a
+   * zero-length buffer — so deliver() can fall back to a plain "could not
+   * be relayed" message instead of silently dropping it.
+   */
+  function registerFile(file: OutboundFile | null | undefined): RegisteredFile | null {
+    if (
+      !file ||
+      typeof file.filename !== 'string' ||
+      !file.filename ||
+      !Buffer.isBuffer(file.data) ||
+      file.data.length === 0
+    ) {
+      return null;
+    }
+    const id = crypto.randomBytes(16).toString('base64url');
+    const registered: RegisteredFile = {
+      id,
+      filename: path.basename(file.filename),
+      mime: mimeForFilename(file.filename),
+      size: file.data.length,
+      data: file.data,
+    };
+    files.set(id, registered);
+    filesTotalBytes += registered.size;
+    evictOldestFilesIfNeeded();
+    return registered;
+  }
+
   let seq = 0;
   const nextId = (prefix: string) => `${prefix}-${Date.now()}-${(seq++).toString(36)}`;
 
@@ -249,6 +354,36 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     if (pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, channel: CHANNEL_TYPE }));
+      return;
+    }
+
+    // P2a attachment download — same token auth as the WS upgrade (query
+    // param, constant-time compare), gated BEFORE existence is even checked
+    // so a bad token can't be used to probe which ids exist.
+    if (pathname.startsWith('/files/')) {
+      if (!tokenMatches(token, url.searchParams.get('token'))) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+      const id = pathname.slice('/files/'.length);
+      const file = files.get(id);
+      if (!file) {
+        const gone = evictedFileIds.has(id);
+        res.writeHead(gone ? 410 : 404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: gone ? 'gone' : 'not found' }));
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': file.mime,
+        'content-length': String(file.size),
+        'content-disposition': contentDispositionHeader(file.filename),
+        'cache-control': 'no-store',
+      });
+      // HEAD gets headers only (lets the SPA probe availability — see
+      // AttachmentRow.tsx's "no longer available" check — without pulling
+      // the whole body over the wire).
+      res.end(req.method === 'HEAD' ? undefined : file.data);
       return;
     }
 
@@ -467,6 +602,12 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     },
 
     async teardown(): Promise<void> {
+      // Files still registered at teardown become explicitly gone (410) once
+      // torn down, rather than lingering as ids nobody can serve until the
+      // next setup() — mirrors eviction rather than inventing a third state.
+      for (const id of files.keys()) evictedFileIds.add(id);
+      files.clear();
+      filesTotalBytes = 0;
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
@@ -496,6 +637,45 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     async deliver(platformId, _threadId, message: OutboundMessage): Promise<string | undefined> {
       if (platformId !== PLATFORM_ID) return undefined;
       const content = (message.content ?? {}) as Record<string, unknown>;
+
+      // P2a outbound attachments. `files` is orthogonal to `content` (an
+      // edit/card/message can in principle carry files too), so this runs
+      // unconditionally before the content-shape branching below rather than
+      // being folded into the plain-message branch at the bottom. Real
+      // incident this fixes: the model sent code as a file, deliver() DROPPED
+      // it silently, the user saw nothing and the agent claimed success.
+      // Never-drop: a file we can't register still becomes a visible message
+      // (mirrors the send_card fallbackText path further down).
+      let lastFileMessageId: string | undefined;
+      if (message.files && message.files.length > 0) {
+        for (const file of message.files) {
+          const registered = registerFile(file);
+          if (registered) {
+            setTypingState(false); // a delivered file is a real deliverable, same as a real message
+            deliveredMessageIds.add(registered.id);
+            emit({
+              type: 'file',
+              id: registered.id,
+              name: registered.filename,
+              mime: registered.mime,
+              size: registered.size,
+              downloadPath: `/files/${registered.id}`,
+            });
+            lastFileMessageId = registered.id;
+          } else {
+            const label = file?.filename || '(unnamed file)';
+            const messageId = nextId('msg');
+            deliveredMessageIds.add(messageId);
+            emit({
+              type: 'message',
+              id: messageId,
+              role: 'assistant',
+              content: `[the agent tried to send a file (${label}) but it could not be relayed]`,
+            });
+            lastFileMessageId = messageId;
+          }
+        }
+      }
 
       // In-place edit of a previously delivered message/card — mirrors the
       // Chat SDK bridge's operation:'edit' handling (chat-sdk-bridge.ts
@@ -621,7 +801,11 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         emit({ type: 'message', id: messageId, role: 'assistant', content: text });
         return messageId;
       }
-      return undefined;
+      // No text/card/edit content — if this delivery was files-only, hand
+      // back the last file's id (there's no case where callers pass BOTH a
+      // meaningful content shape AND expect the file id back; text/card/edit
+      // ids above already took priority via their own early returns).
+      return lastFileMessageId;
     },
 
     async setTyping(platformId): Promise<void> {

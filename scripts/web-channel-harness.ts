@@ -20,7 +20,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { createWebAdapter } from '../src/channels/web.js';
-import type { ChannelSetup, InboundMessage } from '../src/channels/adapter.js';
+import type { ChannelSetup, InboundMessage, OutboundFile } from '../src/channels/adapter.js';
 import { type RawOption } from '../src/channels/ask-question.js';
 
 // ── Copied verbatim from src/modules/approvals/primitive.ts (APPROVAL_OPTIONS,
@@ -31,6 +31,15 @@ const APPROVAL_OPTIONS: RawOption[] = [
   { label: 'Reject', selectedLabel: '❌ Rejected', value: 'reject', style: 'danger' },
   { label: 'Reject with reason…', selectedLabel: '📝 Rejected (awaiting reason)', value: REJECT_WITH_REASON_VALUE },
 ];
+
+// P2a attachment proof fixtures. A real (tiny, valid) 1x1 transparent PNG —
+// so browser-proof-attachment.mjs can drive an actual <img> load, not just a
+// content-type label — and a plain text "document" for the non-image
+// download-card path.
+const DEMO_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+const DEMO_PNG = Buffer.from(DEMO_PNG_BASE64, 'base64');
+const DEMO_DOC = Buffer.from('hello from the agent — this is a plain text attachment\n', 'utf8');
 
 const eventLogPath =
   process.argv[2] ?? path.join(process.cwd(), '.harness-data', 'events.jsonl');
@@ -50,7 +59,7 @@ const PLATFORM_ID = 'local';
 let deliver!: (
   platformId: string,
   threadId: string | null,
-  message: { kind: string; content: unknown },
+  message: { kind: string; content: unknown; files?: OutboundFile[] },
 ) => Promise<string | undefined>;
 let setTyping!: (platformId: string, threadId: string | null) => Promise<void>;
 
@@ -153,6 +162,61 @@ const setup: ChannelSetup = {
         content: { markdown: 'ghost typing test — turn completed after the release signal.' },
       });
       record('ghostTypingDelivered', {});
+      return;
+    }
+
+    // P2a proof scenarios — outbound file attachments.
+    if (text === 'send file') {
+      // A single image attachment, no accompanying text — the exact "model
+      // sent code as a file, user saw nothing" incident shape, minus the
+      // silent drop.
+      const messageId = await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: {},
+        files: [{ filename: 'demo.png', data: DEMO_PNG }],
+      });
+      record('fileDelivered', { messageId, filename: 'demo.png' });
+      return;
+    }
+
+    if (text === 'send doc file') {
+      // Non-image attachment — SPA renders a download card, not a thumbnail.
+      const messageId = await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: {},
+        files: [{ filename: 'notes.txt', data: DEMO_DOC }],
+      });
+      record('fileDelivered', { messageId, filename: 'notes.txt' });
+      return;
+    }
+
+    if (text === 'send bad file') {
+      // Zero-length data — registerFile() rejects it; never-drop must
+      // surface a plain visible message instead of silently eating it.
+      await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: {},
+        files: [{ filename: 'empty.bin', data: Buffer.alloc(0) }],
+      });
+      record('fileNeverDropApplied', {});
+      return;
+    }
+
+    if (text === 'flood files') {
+      // Deliver more files than FILE_COUNT_LIMIT (50, web.ts) back-to-back so
+      // the oldest ones get evicted before the newest ones. A trailing plain
+      // message marks the end so a proof script watching the WS knows when
+      // to stop collecting `file` frames.
+      const FLOOD_COUNT = 55;
+      for (let i = 0; i < FLOOD_COUNT; i++) {
+        await deliver(PLATFORM_ID, null, {
+          kind: 'chat-sdk',
+          content: {},
+          files: [{ filename: `flood-${i}.bin`, data: Buffer.from(`flood file #${i}`) }],
+        });
+      }
+      await deliver(PLATFORM_ID, null, { kind: 'chat-sdk', content: { markdown: 'flood done' } });
+      record('floodFilesDelivered', { count: FLOOD_COUNT });
       return;
     }
 
