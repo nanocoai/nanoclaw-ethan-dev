@@ -39,6 +39,15 @@ export interface ReadyFrame {
    * side (see useNanoclaw.ts), never be treated as "mismatch".
    */
   bundle?: string;
+  /**
+   * WU4 identity: the tailnet login this connection was authenticated as,
+   * when the server knows one — i.e. it authenticated the request from the
+   * `Tailscale-User-Login` header `tailscale serve` injected, under the
+   * server's explicit opt-in (web.ts). Absent for a token-authenticated
+   * connection and on any server that predates this feature; absent means
+   * "no identity to show", never an empty string.
+   */
+  userId?: string;
 }
 
 export interface TypingFrame {

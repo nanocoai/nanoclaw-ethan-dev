@@ -251,6 +251,22 @@ function clearToken() {
 export interface NanoclawState {
   bootstrapped: boolean;
   token: string | null;
+  /**
+   * WU4: true once this tab knows it needs a token — i.e. a connection
+   * attempt was closed 4401. Distinct from `!token`, which no longer implies
+   * "show the login screen": a tab with no stored token first ATTEMPTS a bare
+   * connect, because a server sitting behind `tailscale serve` with the
+   * identity opt-in on authenticates it from the injected header with no
+   * token at all (web.ts). Only when that attempt is rejected does the login
+   * screen appear, exactly as it always did.
+   */
+  showLogin: boolean;
+  /**
+   * The tailnet login this connection was authenticated as, when the server
+   * reported one on the `ready` frame (identity auth). null for a
+   * token-authenticated connection, and on any server that predates WU4.
+   */
+  userId: string | null;
   status: ConnectionStatus;
   items: ConversationItem[];
   typing: boolean;
@@ -281,6 +297,8 @@ export interface NanoclawState {
 export function useNanoclaw(): NanoclawState {
   const [bootstrapped, setBootstrapped] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  const [showLogin, setShowLogin] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [items, setItems] = useState<ConversationItem[]>([]);
   const [typing, setTyping] = useState(false);
@@ -350,12 +368,18 @@ export function useNanoclaw(): NanoclawState {
     setBootstrapped(true);
   }, []);
 
-  // (Re)connect whenever we hold a token. Auto-reconnects on any drop with
-  // exponential backoff + jitter, capped at ~30s; a 4401 close (bad/revoked
-  // token) is NOT a drop — it clears the token and sends the user back to
-  // login instead of retrying forever against a token that will never work.
+  // (Re)connect as soon as the token bootstrap has resolved — WITH the stored
+  // token if there is one, and bare (no `?token=`) if there isn't: a server
+  // behind `tailscale serve` with the identity opt-in on authenticates that
+  // bare connect from the header it was handed, so the login screen must not
+  // be assumed before the server has had a chance to say otherwise. Auto-
+  // reconnects on any drop with exponential backoff + jitter, capped at ~30s;
+  // a 4401 close is NOT a drop — it means this tab genuinely needs a token, so
+  // it stops retrying and shows the login screen (clearing the stored token
+  // first, if the rejected attempt used one).
   useEffect(() => {
-    if (!token) return;
+    if (!bootstrapped) return;
+    if (showLogin) return;
 
     let cancelled = false;
     let attempt = 0;
@@ -373,7 +397,8 @@ export function useNanoclaw(): NanoclawState {
       if (cancelled) return;
 
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const wsUrl = `${proto}://${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+      const base = `${proto}://${window.location.host}/ws`;
+      const wsUrl = token ? `${base}?token=${encodeURIComponent(token)}` : base;
 
       setStatus('connecting');
       const ws = new WebSocket(wsUrl);
@@ -408,6 +433,12 @@ export function useNanoclaw(): NanoclawState {
         switch (frame.type) {
           case 'ready':
             setStatus('connected');
+            // Identity, when the server has one for this connection. `??
+            // null` deliberately RESETS it when the field is absent, so a
+            // reconnect that falls back to token auth (or lands on a server
+            // without the opt-in) stops showing a login it can no longer
+            // vouch for.
+            setUserId(frame.userId ?? null);
             // Adopt the server's CURRENT typing state rather than whatever
             // this connection's `typing` was left at before the drop — the
             // ghost-typing fix's other half (see types.ts ReadyFrame.typing
@@ -476,10 +507,22 @@ export function useNanoclaw(): NanoclawState {
         if (cancelled) return;
 
         if (event.code === 4401) {
-          clearToken();
-          setAuthError(true);
+          // The server wants a token this tab doesn't have. Two shapes:
+          //  - the attempt CARRIED a token: it's bad or revoked — clear it and
+          //    say so, exactly as before this feature.
+          //  - the attempt was bare (identity probe): nothing was wrong with
+          //    any token, so no error message — this is just the plain
+          //    "enter your access token" screen a tokenless tab always got.
+          if (token) {
+            clearToken();
+            setAuthError(true);
+            setToken(null);
+          } else {
+            setAuthError(false);
+          }
+          setUserId(null);
+          setShowLogin(true);
           setStatus('disconnected');
-          setToken(null);
           return;
         }
 
@@ -513,7 +556,7 @@ export function useNanoclaw(): NanoclawState {
         wsRef.current = null;
       }
     };
-  }, [token]);
+  }, [bootstrapped, showLogin, token]);
 
   const login = useCallback(
     (raw: string) => {
@@ -521,6 +564,7 @@ export function useNanoclaw(): NanoclawState {
       if (!trimmed) return;
       storeToken(trimmed);
       setAuthError(false);
+      setShowLogin(false);
       setItems([]);
       frameLogRef.current = [];
       seenSeqsRef.current = new Set();
@@ -532,7 +576,9 @@ export function useNanoclaw(): NanoclawState {
   );
 
   // Files-IN: POSTs a multipart /upload (token in the query string, same
-  // convention as the WS upgrade and the /files/ download route). No
+  // convention as the WS upgrade and the /files/ download route — and, like
+  // both of those, omitted entirely when this tab has no token, so the
+  // server authenticates the request from the Tailscale header instead). No
   // optimistic local echo here — unlike the plain-text WS path below, the
   // user's message-bubble AND each file row all arrive as ordinary emit()'d
   // frames over THIS SAME already-open WS connection (web.ts handleUpload:
@@ -546,7 +592,8 @@ export function useNanoclaw(): NanoclawState {
         const form = new FormData();
         if (text) form.append('text', text);
         for (const file of files) form.append('file', file, file.name);
-        const res = await fetch(`/upload?token=${encodeURIComponent(token ?? '')}`, {
+        const url = token ? `/upload?token=${encodeURIComponent(token)}` : '/upload';
+        const res = await fetch(url, {
           method: 'POST',
           body: form,
         });
@@ -613,6 +660,8 @@ export function useNanoclaw(): NanoclawState {
   return {
     bootstrapped,
     token,
+    showLogin,
+    userId,
     status,
     items,
     typing,

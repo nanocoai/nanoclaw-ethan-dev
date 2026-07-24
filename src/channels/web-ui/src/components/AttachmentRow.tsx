@@ -6,8 +6,15 @@ import { Timestamp } from './Timestamp';
 import { detectInlineKind, INLINE_MAX_BYTES } from '../inline-view';
 import { InlineFileViewer } from './InlineFileViewer';
 
-/** Appends the shared token the same way the WS connection does — a plain `?token=` query param. */
-function withToken(downloadPath: string, token: string): string {
+/**
+ * Appends the shared token the same way the WS connection does — a plain
+ * `?token=` query param — or leaves the path untouched when this tab has no
+ * token, which is the identity-auth case (WU4): the server authenticates the
+ * download from the `Tailscale-User-Login` header instead, exactly as it did
+ * for the WS upgrade that got us here.
+ */
+function withToken(downloadPath: string, token: string | null): string {
+  if (!token) return downloadPath;
   const sep = downloadPath.includes('?') ? '&' : '?';
   return `${downloadPath}${sep}token=${encodeURIComponent(token)}`;
 }
@@ -42,13 +49,15 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
     );
   }
 
-  if (!token) return null; // no session token yet — nothing to authenticate a download with
   const href = withToken(file.downloadPath, token);
   // New-tab links ask the server for an inline Content-Disposition; without
   // it every /files/ response says `attachment` and "open in new tab" can
   // only ever re-download (found live). The server still decides — unsafe
-  // mimes (html/svg/xml) stay attachment regardless of this param.
-  const inlineHref = `${href}&inline=1`;
+  // mimes (html/svg/xml) stay attachment regardless of this param. The
+  // separator has to be computed rather than hardcoded to `&`: on the
+  // identity-auth path there's no `?token=` ahead of it, so the query string
+  // starts here.
+  const inlineHref = `${href}${href.includes('?') ? '&' : '?'}inline=1`;
   const isImage = file.mime.startsWith('image/');
   // Inline "open file" (md-bui-style): markdown/code/text under ~1MB gets a
   // toggle to expand it inline; images are already inline (above) and never

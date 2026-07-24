@@ -21,6 +21,29 @@
  * once on the WebSocket upgrade (`/ws?token=...`); compared in constant time.
  * The token is never written to logs.
  *
+ * Tailscale identity (opt-in, env `NANOCLAW_WEB_TRUST_TAILSCALE=1`): in
+ * production this adapter sits behind `tailscale serve`, which authenticates
+ * the tailnet peer itself and injects a verified `Tailscale-User-Login`
+ * header into every proxied request. With the opt-in set, a request carrying
+ * a non-empty such header is authenticated WITHOUT a token, and that login
+ * (e.g. `someone@example.com`) becomes the connection's userId — reported
+ * back in the `ready` frame and in the connection log line. The token keeps
+ * working as a fallback (probe scripts, proof harnesses, setups with no
+ * `tailscale serve` in front), and takes precedence when both are present.
+ * With the opt-in UNSET the header is ignored entirely and behavior is
+ * byte-for-byte the token-only behavior that predates this feature. See
+ * authenticate() for the single shared decision every entry point uses.
+ *
+ * Accepted caveat, demo grade: with the opt-in set, anything that can reach
+ * this loopback listener directly (bypassing `tailscale serve`) can forge the
+ * header and authenticate as any login. That is accepted here because local
+ * processes on this host are all-trusted and default-bridge containers cannot
+ * reach host loopback; it must be revisited in the multi-user hardening pass,
+ * where the fix is to verify the proxy hop rather than the header alone.
+ * The header path never weakens the token path: the constant-time token
+ * compare runs first and unchanged, and the header is only ever consulted
+ * under the explicit env opt-in.
+ *
  * Replay history: every recorded frame is also mirrored to
  * `<DATA_DIR>/web-channel-history.jsonl` (append-only, periodically
  * compacted) so a process restart still has a conversation to replay, not
@@ -48,6 +71,11 @@ const CHANNEL_TYPE = 'web';
 const PLATFORM_ID = 'local';
 const DEFAULT_PORT = 7890;
 const DEFAULT_HOST = '127.0.0.1';
+
+// The header `tailscale serve` injects on every proxied request, carrying the
+// tailnet login it verified for the calling peer. Lowercase because Node
+// normalizes incoming header names that way in `req.headers`.
+const TAILSCALE_LOGIN_HEADER = 'tailscale-user-login';
 
 // Half-open-socket detection (found in a reboot drill: a server restart
 // leaves a connected browser tab on a TCP socket that never gets a close
@@ -399,9 +427,59 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   const staticRoot = options.staticDir ?? spaDir();
   const { token, generated } = resolveToken(dataDir);
 
+  // Tailscale identity opt-in (see the file header). Read once, here, at
+  // adapter creation: an env flip is a deploy-time decision, and re-reading it
+  // per request would let the trust boundary move under a live connection.
+  const trustTailscale = process.env.NANOCLAW_WEB_TRUST_TAILSCALE === '1';
+
   let server: http.Server | null = null;
   let wss: WebSocketServer | null = null;
   const clients = new Set<WebSocket>();
+
+  // Identity of each connected client, when there is one to know (i.e. it
+  // authenticated via the trusted Tailscale header rather than the shared
+  // token). Deliberately per-connection state and nothing more: this is the
+  // foundation multi-user work will build on, NOT multi-user semantics —
+  // routing, per-user history and per-user sessions all still treat this
+  // adapter as the single-user surface it is today.
+  const clientUserIds = new WeakMap<WebSocket, string>();
+
+  /**
+   * The verified tailnet login for this request, or null when there is none to
+   * trust. Non-null ONLY under the explicit env opt-in — with the opt-in unset
+   * this returns null before the header is even looked at, which is what keeps
+   * the no-opt-in path byte-for-byte identical to the token-only behavior.
+   */
+  function trustedTailscaleLogin(req: http.IncomingMessage): string | null {
+    if (!trustTailscale) return null;
+    const raw = req.headers[TAILSCALE_LOGIN_HEADER];
+    // Node hands back an array for a header sent more than once; take the
+    // first, and treat an empty/whitespace-only value as absent (an empty
+    // header must never authenticate anyone).
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof value !== 'string') return null;
+    const login = value.trim();
+    return login.length > 0 ? login : null;
+  }
+
+  /**
+   * The ONE auth decision, shared by every authenticated entry point (the /ws
+   * upgrade, /files/<id> download, /upload). Fixed precedence:
+   *   1. a valid shared token   -> authenticated, identity unknown (userId undefined)
+   *   2. a trusted Tailscale-User-Login header -> authenticated as that login
+   *   3. neither                -> null; the caller rejects exactly as it did
+   *                                before this feature (same status/close code)
+   * Token first and unchanged (constant-time compare, never logged), so
+   * nothing about the header path can weaken it. Returning `{}` rather than a
+   * bare boolean is what lets callers tell "authenticated, no identity" from
+   * "authenticated as someone" without a second lookup.
+   */
+  function authenticate(req: http.IncomingMessage, url: URL): { userId?: string } | null {
+    if (tokenMatches(token, url.searchParams.get('token'))) return {};
+    const login = trustedTailscaleLogin(req);
+    if (login) return { userId: login };
+    return null;
+  }
 
   // Files-IN (upload): the ChannelSetup handed to setup(), held so the
   // HTTP-only /upload handler (serveStatic, defined below, has no other
@@ -822,11 +900,12 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       return;
     }
 
-    // P2a attachment download — same token auth as the WS upgrade (query
-    // param, constant-time compare), gated BEFORE existence is even checked
-    // so a bad token can't be used to probe which ids exist.
+    // P2a attachment download — same auth decision as the WS upgrade (token
+    // query param first, then the trusted Tailscale header under the opt-in;
+    // see authenticate()), gated BEFORE existence is even checked so an
+    // unauthenticated caller can't use this to probe which ids exist.
     if (pathname.startsWith('/files/')) {
-      if (!tokenMatches(token, url.searchParams.get('token'))) {
+      if (!authenticate(req, url)) {
         res.writeHead(401, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'unauthorized' }));
         return;
@@ -856,11 +935,11 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     }
 
     // Files-IN — multipart upload. Auth checked BEFORE anything else (same
-    // tokenMatches gate, same query-param convention as /files/ above),
-    // before even the method/body is looked at, so a bad token can't be used
-    // to probe endpoint behavior.
+    // authenticate() gate, same query-param convention as /files/ above),
+    // before even the method/body is looked at, so an unauthenticated caller
+    // can't use this to probe endpoint behavior.
     if (pathname === '/upload') {
-      if (!tokenMatches(token, url.searchParams.get('token'))) {
+      if (!authenticate(req, url)) {
         res.writeHead(401, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'unauthorized' }));
         return;
@@ -1024,7 +1103,11 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           socket.destroy();
           return;
         }
-        if (!tokenMatches(token, url.searchParams.get('token'))) {
+        // Same shared decision as the HTTP endpoints (see authenticate()):
+        // valid token, else a trusted Tailscale login under the opt-in, else
+        // the unchanged 4401 rejection below.
+        const auth = authenticate(req, url);
+        if (!auth) {
           // Complete the WS handshake rather than rejecting the HTTP upgrade
           // with a raw 401: the browser's WebSocket API cannot see an HTTP
           // status code on a failed upgrade, only an opaque close code 1006
@@ -1037,7 +1120,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           // reconnecting. Never added to `clients`, so it never touches
           // history/broadcast.
           wss!.handleUpgrade(req, socket, head, (ws) => {
-            log.info('Web client rejected: bad token');
+            log.info('Web client rejected: no valid token or trusted identity');
             ws.close(4401, 'invalid token');
           });
           return;
@@ -1053,8 +1136,14 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           // relies on to merge instead of silently losing the overlap.
           clients.add(ws);
           aliveClients.set(ws, true);
+          if (auth.userId) clientUserIds.set(ws, auth.userId);
           ws.on('pong', () => aliveClients.set(ws, true));
-          log.info('Web client connected', { clients: clients.size });
+          // `userId` is omitted from the log line entirely when the client
+          // authenticated by token — absent means "not known", never "".
+          log.info(
+            'Web client connected',
+            auth.userId ? { clients: clients.size, userId: auth.userId } : { clients: clients.size },
+          );
           // Replay everything we remember BEFORE 'ready', so the SPA rebuilds
           // its conversation before it flips to the connected state — this is
           // what makes a reconnect (dropped socket, or the whole ws layer
@@ -1069,13 +1158,21 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           // P2b: `bundle` is omitted entirely (not sent as null/empty) when
           // there's nothing to report — the SPA's backward-compat contract is
           // "field absent => do nothing", never "field present but falsy".
+          // `userId` follows the same absent-means-nothing-to-report contract
+          // as `bundle`: sent only when this connection actually has a
+          // verified identity (Tailscale header path), omitted entirely for a
+          // token-authenticated client, so the SPA can treat "field present"
+          // as "there is a login to show" with no falsy special cases.
           const readyFrame: Record<string, unknown> = { type: 'ready', threadId: null, typing: typingState };
           if (currentBundle) readyFrame.bundle = currentBundle;
+          if (auth.userId) readyFrame.userId = auth.userId;
           ws.send(JSON.stringify(readyFrame));
           ws.on('message', (data) => handleClientFrame(data.toString('utf8'), config));
           ws.on('close', () => {
+            const userId = clientUserIds.get(ws);
             clients.delete(ws);
-            log.info('Web client disconnected', { clients: clients.size });
+            clientUserIds.delete(ws);
+            log.info('Web client disconnected', userId ? { clients: clients.size, userId } : { clients: clients.size });
           });
           ws.on('error', (err) => log.warn('Web client socket error', { err }));
         });

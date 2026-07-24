@@ -10,6 +10,8 @@ export default function App() {
   const {
     bootstrapped,
     token,
+    showLogin,
+    userId,
     status,
     items,
     typing,
@@ -29,7 +31,12 @@ export default function App() {
     return <div className="h-full bg-zinc-950" />;
   }
 
-  if (!token) {
+  // Gated on showLogin, NOT on `!token`: a tab with no stored token still
+  // tries a bare connect first, because a server behind `tailscale serve`
+  // with the identity opt-in on will authenticate it from the injected
+  // header (see useNanoclaw.ts). The login screen is what a 4401 close means
+  // — same screen, same error copy for a rejected token, as before.
+  if (showLogin) {
     return (
       <div className="flex h-full flex-col bg-zinc-950">
         <Login authError={authError} onSubmit={login} />
@@ -55,7 +62,7 @@ export default function App() {
         if (files.length > 0) promptRef.current?.addFiles(files);
       }}
     >
-      <TopBar status={status} />
+      <TopBar status={status} userId={userId} />
       {bundleStale && <UpdateBanner onReload={() => window.location.reload()} />}
       <Conversation
         items={items}
