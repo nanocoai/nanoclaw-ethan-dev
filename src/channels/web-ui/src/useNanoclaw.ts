@@ -137,63 +137,99 @@ export function useNanoclaw(): NanoclawState {
     setBootstrapped(true);
   }, []);
 
-  // (Re)connect whenever we hold a token.
+  // (Re)connect whenever we hold a token. Auto-reconnects on any drop with
+  // exponential backoff + jitter, capped at ~30s; a 4401 close (bad/revoked
+  // token) is NOT a drop — it clears the token and sends the user back to
+  // login instead of retrying forever against a token that will never work.
   useEffect(() => {
     if (!token) return;
 
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${proto}://${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+    let cancelled = false;
+    let attempt = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    setStatus('connecting');
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    const connect = () => {
+      if (cancelled) return;
 
-    ws.onmessage = (event) => {
-      let frame: ServerFrame;
-      try {
-        frame = JSON.parse(String(event.data)) as ServerFrame;
-      } catch {
-        return;
-      }
-      switch (frame.type) {
-        case 'ready':
-          setStatus('connected');
-          break;
-        case 'typing':
-          setTyping(frame.on);
-          break;
-        case 'message':
-        case 'card':
-        case 'generic_card':
-        case 'card_resolved':
-        case 'edit':
-          setItems((prev) => applyServerFrame(prev, frame));
-          break;
-      }
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const wsUrl = `${proto}://${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+
+      setStatus('connecting');
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        attempt = 0; // a clean connect resets the backoff
+      };
+
+      ws.onmessage = (event) => {
+        let frame: ServerFrame;
+        try {
+          frame = JSON.parse(String(event.data)) as ServerFrame;
+        } catch {
+          return;
+        }
+        switch (frame.type) {
+          case 'ready':
+            setStatus('connected');
+            break;
+          case 'typing':
+            setTyping(frame.on);
+            break;
+          case 'history':
+            // Rebuild the whole conversation from the replay log instead of
+            // appending to whatever was left over from before the drop.
+            setItems(frame.frames.reduce(applyServerFrame, [] as ConversationItem[]));
+            break;
+          case 'message':
+          case 'card':
+          case 'generic_card':
+          case 'card_resolved':
+          case 'edit':
+            setItems((prev) => applyServerFrame(prev, frame));
+            break;
+        }
+      };
+
+      ws.onclose = (event) => {
+        if (wsRef.current === ws) wsRef.current = null;
+        if (cancelled) return;
+
+        if (event.code === 4401) {
+          clearToken();
+          setAuthError(true);
+          setStatus('disconnected');
+          setToken(null);
+          return;
+        }
+
+        setStatus('disconnected');
+        attempt += 1;
+        const base = Math.min(30000, 1000 * 2 ** (attempt - 1));
+        const jitter = Math.random() * 1000;
+        const delay = Math.min(30000, base + jitter);
+        reconnectTimer = setTimeout(connect, delay);
+      };
     };
 
-    ws.onclose = (event) => {
-      if (event.code === 4401) {
-        clearToken();
-        setAuthError(true);
-        setStatus('disconnected');
-        setToken(null);
-      } else {
-        setStatus('disconnected');
-      }
-    };
+    connect();
 
     return () => {
-      // Detach handlers so StrictMode's dev double-invoke can't fire stale
-      // state updates, then close the socket.
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onclose = null;
-      ws.onerror = null;
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      const ws = wsRef.current;
+      if (ws) {
+        // Detach handlers so StrictMode's dev double-invoke can't fire stale
+        // state updates, then close the socket.
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+        wsRef.current = null;
       }
-      if (wsRef.current === ws) wsRef.current = null;
     };
   }, [token]);
 

@@ -97,7 +97,20 @@ export type ServerFrame =
   | CardFrame
   | CardResolvedFrame
   | GenericCardFrame
-  | EditFrame;
+  | EditFrame
+  | HistoryFrame;
+
+/**
+ * Replay of the server's bounded frame ring buffer, sent right after a
+ * connection opens (before `ready`) so a reconnecting client rebuilds the
+ * whole conversation instead of starting blank. `frames` never itself
+ * contains a `history` frame — it's the raw log of everything else that was
+ * ever emitted, replayed in order through the same reducer as live frames.
+ */
+export interface HistoryFrame {
+  type: 'history';
+  frames: ServerFrame[];
+}
 
 // ---- Client -> server frames ----
 

@@ -151,6 +151,14 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   // sanity check on our side.
   const deliveredMessageIds = new Set<string>();
 
+  // Bounded in-memory replay log — lets a reconnecting client rebuild the
+  // conversation instead of showing a blank screen. Deliberately not
+  // persisted: it lives in this closure, so it survives a teardown()+setup()
+  // network bounce (same adapter instance) but not a process restart.
+  // Transient frames (typing) are never recorded.
+  const HISTORY_LIMIT = 200;
+  const history: Record<string, unknown>[] = [];
+
   let seq = 0;
   const nextId = (prefix: string) => `${prefix}-${Date.now()}-${(seq++).toString(36)}`;
 
@@ -165,6 +173,13 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         }
       }
     }
+  }
+
+  /** Broadcast a frame AND append it to the replay history. */
+  function emit(frame: Record<string, unknown>): void {
+    history.push(frame);
+    if (history.length > HISTORY_LIMIT) history.shift();
+    broadcast(frame);
   }
 
   function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -252,7 +267,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
 
       // Edit the card in place to its terminal chosen state (removes buttons),
       // then dispatch onAction — mirroring the bridge's order.
-      broadcast({ type: 'card_resolved', questionId, selectedIndex, selectedLabel, actor: 'you' });
+      emit({ type: 'card_resolved', questionId, selectedIndex, selectedLabel, actor: 'you' });
       renderStore.delete(questionId);
 
       try {
@@ -289,6 +304,11 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         wss!.handleUpgrade(req, socket, head, (ws) => {
           clients.add(ws);
           log.info('Web client connected', { clients: clients.size });
+          // Replay everything we remember BEFORE 'ready', so the SPA rebuilds
+          // its conversation before it flips to the connected state — this is
+          // what makes a reconnect (dropped socket, or the whole ws layer
+          // bouncing) look seamless instead of blank.
+          ws.send(JSON.stringify({ type: 'history', frames: history }));
           ws.send(JSON.stringify({ type: 'ready', threadId: null }));
           ws.on('message', (data) => handleClientFrame(data.toString('utf8'), config));
           ws.on('close', () => {
@@ -349,7 +369,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         if (!deliveredMessageIds.has(messageId)) {
           log.warn('Editing a message id this adapter never delivered — forwarding anyway', { messageId });
         }
-        broadcast({ type: 'edit', id: messageId, content: text });
+        emit({ type: 'edit', id: messageId, content: text });
         return undefined;
       }
 
@@ -366,7 +386,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         const messageId = nextId('card');
         deliveredMessageIds.add(messageId);
         renderStore.set(questionId, { title, options, messageId });
-        broadcast({
+        emit({
           type: 'card',
           id: messageId,
           questionId,
@@ -437,7 +457,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
             // bridge, which drops here unconditionally).
             const messageId = nextId('msg');
             deliveredMessageIds.add(messageId);
-            broadcast({ type: 'message', id: messageId, role: 'assistant', content: fallbackText });
+            emit({ type: 'message', id: messageId, role: 'assistant', content: fallbackText });
             return messageId;
           }
           log.warn('send_card payload empty, skipping delivery');
@@ -446,7 +466,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
 
         const messageId = nextId('gcard');
         deliveredMessageIds.add(messageId);
-        broadcast({ type: 'generic_card', id: messageId, title, body, links, fallbackText });
+        emit({ type: 'generic_card', id: messageId, title, body, links, fallbackText });
         return messageId;
       }
 
@@ -459,7 +479,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       if (text) {
         const messageId = nextId('msg');
         deliveredMessageIds.add(messageId);
-        broadcast({ type: 'message', id: messageId, role: 'assistant', content: text });
+        emit({ type: 'message', id: messageId, role: 'assistant', content: text });
         return messageId;
       }
       return undefined;

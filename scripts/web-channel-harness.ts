@@ -196,6 +196,22 @@ async function main() {
 
   await adapter.setup(setup);
   console.log(`HARNESS READY  event log: ${eventLogPath}`);
+  fs.writeFileSync(path.join(dataDir, 'harness.pid'), String(process.pid));
+
+  // Phase-1 parity: prove the reconnect + history-replay path survives the
+  // WS server itself bouncing, not just a dropped client socket. SIGUSR2
+  // tears down and re-sets-up the SAME adapter instance — the http/ws layer
+  // gets rebuilt, but renderStore / deliveredMessageIds / history all live in
+  // createWebAdapter()'s outer closure, so they ride through untouched. This
+  // is the "kill/restart the WS server mid-session" scenario the harness
+  // proof drives (see scripts/browser-proof-reconnect.mjs).
+  process.on('SIGUSR2', async () => {
+    console.log('BOUNCE tearing down the WS/HTTP layer');
+    await adapter.teardown();
+    await new Promise((r) => setTimeout(r, 200));
+    await adapter.setup(setup);
+    console.log('BOUNCE WS/HTTP layer back up');
+  });
 
   const shutdown = async () => {
     await adapter.teardown();
