@@ -234,7 +234,10 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
               res.end('not built — run `npm run build` in src/channels/web-ui');
               return;
             }
-            res.writeHead(200, { 'content-type': CONTENT_TYPES['.html'] });
+            res.writeHead(200, {
+              'content-type': CONTENT_TYPES['.html'],
+              'cache-control': 'no-store',
+            });
             res.end(idx);
           });
           return;
@@ -243,8 +246,17 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         res.end('not found');
         return;
       }
-      const type = CONTENT_TYPES[path.extname(resolved)] ?? 'application/octet-stream';
-      res.writeHead(200, { 'content-type': type });
+      const ext = path.extname(resolved);
+      const type = CONTENT_TYPES[ext] ?? 'application/octet-stream';
+      // index.html must never be cached (it names the hashed bundles); the
+      // hashed .js/.css bundles themselves are immutable by construction.
+      const cache =
+        ext === '.html'
+          ? 'no-store'
+          : ext === '.js' || ext === '.css'
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache';
+      res.writeHead(200, { 'content-type': type, 'cache-control': cache });
       res.end(buf);
     });
   }
