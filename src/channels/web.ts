@@ -111,10 +111,27 @@ function mimeForFilename(filename: string): string {
  * escaped) plus a UTF-8 `filename*` for names outside ASCII — good enough for
  * the browsers this single-user demo actually needs to support.
  */
-function contentDispositionHeader(filename: string): string {
+function contentDispositionHeader(filename: string, disposition: 'attachment' | 'inline' = 'attachment'): string {
   const quoted = filename.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const encoded = encodeURIComponent(filename).replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16)}`);
-  return `attachment; filename="${quoted}"; filename*=UTF-8''${encoded}`;
+  return `${disposition}; filename="${quoted}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
+ * Mimes allowed to render as a browser DOCUMENT when the client asks for
+ * ?inline=1 on a download. Without this opt-in every /files/ response is
+ * `Content-Disposition: attachment`, which makes an "open in new tab" link
+ * useless — the browser downloads instead of displaying (found live: clicking
+ * "open" on a non-inline-eligible upload just re-downloaded it). Deny by
+ * default: html/svg/xml stay attachment-only forever — a model- or
+ * user-authored document executing under this origin is the exact thing the
+ * octet-stream default exists to prevent.
+ */
+function mimeSafeForInlineDisposition(mime: string): boolean {
+  if (mime === 'text/html' || mime === 'image/svg+xml' || mime.includes('xml')) return false;
+  return (
+    mime.startsWith('image/') || mime.startsWith('text/') || mime === 'application/pdf' || mime === 'application/json'
+  );
 }
 
 /** One outbound file, registered under an opaque random id. Never a filesystem path — `data` is the buffer OutboundFile already carries in memory. */
@@ -710,11 +727,14 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         res.end(JSON.stringify({ error: gone ? 'gone' : 'not found' }));
         return;
       }
+      const wantsInline = url.searchParams.get('inline') === '1';
+      const disposition = wantsInline && mimeSafeForInlineDisposition(file.mime) ? 'inline' : 'attachment';
       res.writeHead(200, {
         'content-type': file.mime,
         'content-length': String(file.size),
-        'content-disposition': contentDispositionHeader(file.filename),
+        'content-disposition': contentDispositionHeader(file.filename, disposition),
         'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
       });
       // HEAD gets headers only (lets the SPA probe availability — see
       // AttachmentRow.tsx's "no longer available" check — without pulling

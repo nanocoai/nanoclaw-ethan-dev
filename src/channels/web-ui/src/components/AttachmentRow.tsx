@@ -44,6 +44,11 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
 
   if (!token) return null; // no session token yet — nothing to authenticate a download with
   const href = withToken(file.downloadPath, token);
+  // New-tab links ask the server for an inline Content-Disposition; without
+  // it every /files/ response says `attachment` and "open in new tab" can
+  // only ever re-download (found live). The server still decides — unsafe
+  // mimes (html/svg/xml) stay attachment regardless of this param.
+  const inlineHref = `${href}&inline=1`;
   const isImage = file.mime.startsWith('image/');
   // Inline "open file" (md-bui-style): markdown/code/text under ~1MB gets a
   // toggle to expand it inline; images are already inline (above) and never
@@ -74,7 +79,7 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
         data-role={file.role}
       >
         <a
-          href={href}
+          href={inlineHref}
           target="_blank"
           rel="noopener noreferrer"
           data-testid="attachment-image"
@@ -180,7 +185,7 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
 
         {!canInline && (
           <a
-            href={href}
+            href={inlineHref}
             target="_blank"
             rel="noopener noreferrer"
             data-testid="attachment-open-newtab"
