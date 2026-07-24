@@ -31,6 +31,7 @@ import { fileURLToPath } from 'url';
 
 import { WebSocketServer, type WebSocket } from 'ws';
 
+import { log } from '../log.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
 import type {
   ChannelAdapter,
@@ -38,6 +39,7 @@ import type {
   ChannelSetup,
   OutboundMessage,
 } from './adapter.js';
+import { registerChannelAdapter } from './channel-registry.js';
 
 const CHANNEL_TYPE = 'web';
 const PLATFORM_ID = 'local';
@@ -67,15 +69,6 @@ const CONTENT_TYPES: Record<string, string> = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.map': 'application/json; charset=utf-8',
-};
-
-/** Minimal console logger — the real adapter would import src/log.js; this
- *  keeps web.ts runnable in the standalone harness with zero repo wiring.
- *  Tokens are never passed to it. */
-const log = {
-  info: (msg: string, meta?: unknown) => console.log(`[web] ${msg}`, meta ?? ''),
-  warn: (msg: string, meta?: unknown) => console.warn(`[web] ${msg}`, meta ?? ''),
-  error: (msg: string, meta?: unknown) => console.error(`[web] ${msg}`, meta ?? ''),
 };
 
 /**
@@ -402,7 +395,10 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   return adapter;
 }
 
-// Self-register when imported as a channel module (host side-effect import).
-// Guarded so the standalone harness can import createWebAdapter without the
-// registry present.
+// Self-register when imported as a channel module (host side-effect import),
+// mirroring cli.ts's registerChannelAdapter('cli', ...) at the foot of the file.
+// The factory takes no creds, so it never returns null. `defaults` is the same
+// const the adapter reports, resolvable offline by ncl/setup without spawning.
+registerChannelAdapter('web', { factory: () => createWebAdapter(), defaults: WEB_DEFAULTS });
+
 export const WEB_CHANNEL_DEFAULTS = WEB_DEFAULTS;
