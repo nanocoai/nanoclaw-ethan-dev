@@ -54,9 +54,51 @@ let deliver!: (
 ) => Promise<string | undefined>;
 let setTyping!: (platformId: string, threadId: string | null) => Promise<void>;
 
+/** Text of an inbound `user_message` — used to pick which demo scenario to play. */
+function inboundText(message: InboundMessage): string {
+  const content = message.content as Record<string, unknown> | undefined;
+  return typeof content?.text === 'string' ? content.text : '';
+}
+
 const setup: ChannelSetup = {
   async onInbound(platformId: string, threadId: string | null, message: InboundMessage) {
     record('onInbound', { platformId, threadId, message });
+
+    const text = inboundText(message);
+
+    // Phase-1 parity scenarios (generic card rendering) — everything else
+    // falls through to the original markdown + approval card demo below.
+    if (text === 'show generic card') {
+      await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: {
+          type: 'card',
+          card: {
+            title: 'Release notes',
+            description: 'v2.1.53 shipped the web channel phase-1 parity work.',
+            children: ['Generic cards, message edits, and reconnect + history all land in this build.'],
+            actions: [
+              { label: 'View changelog', url: 'https://nanoclaw.dev/changelog', style: 'primary' },
+              { label: 'Open docs', url: 'https://docs.nanoclaw.dev' },
+            ],
+          },
+          fallbackText: 'Release notes: v2.1.53 shipped the web channel phase-1 parity work.',
+        },
+      });
+      record('genericCardDelivered', {});
+      return;
+    }
+
+    if (text === 'show fallback card') {
+      // No title/description/children/actions — only a fallbackText. Proves
+      // the adapter never silently drops an unrenderable send_card payload.
+      await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: { type: 'card', card: {}, fallbackText: 'Fallback-only card: nothing structured to render.' },
+      });
+      record('fallbackCardDelivered', {});
+      return;
+    }
 
     // Play host: acknowledge with a rich markdown message, then an approval card.
     await setTyping(PLATFORM_ID, null);

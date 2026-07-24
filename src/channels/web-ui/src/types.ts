@@ -55,12 +55,28 @@ export interface CardResolvedFrame {
   actor: string;
 }
 
-export type ServerFrame =
-  | ReadyFrame
-  | TypingFrame
-  | MessageFrame
-  | CardFrame
-  | CardResolvedFrame;
+/** A link-style action on a generic card — opens a URL, never round-trips. */
+export interface CardLink {
+  label: string;
+  url: string;
+  style?: OptionStyle;
+}
+
+/**
+ * Generic display card (the `send_card` MCP tool), as opposed to CardFrame's
+ * interactive ask_question. No callback buttons — fire-and-forget, matching
+ * the Chat SDK bridge's `content.type === 'card'` branch.
+ */
+export interface GenericCardFrame {
+  type: 'generic_card';
+  id: string;
+  title: string;
+  body: string[];
+  links: CardLink[];
+  fallbackText: string;
+}
+
+export type ServerFrame = ReadyFrame | TypingFrame | MessageFrame | CardFrame | CardResolvedFrame | GenericCardFrame;
 
 // ---- Client -> server frames ----
 
@@ -98,4 +114,13 @@ export interface ChatCard {
   resolution?: CardResolution;
 }
 
-export type ConversationItem = ChatMessage | ChatCard;
+export interface ChatGenericCard {
+  kind: 'generic_card';
+  id: string;
+  title: string;
+  body: string[];
+  links: CardLink[];
+  fallbackText: string;
+}
+
+export type ConversationItem = ChatMessage | ChatCard | ChatGenericCard;

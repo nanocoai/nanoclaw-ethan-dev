@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  ConnectionStatus,
-  ConversationItem,
-  ServerFrame,
-} from './types';
+import type { ConnectionStatus, ConversationItem, ServerFrame } from './types';
 
 const TOKEN_KEY = 'nanoclaw_web_token';
 
@@ -81,9 +77,7 @@ export function useNanoclaw(): NanoclawState {
     if (!token) return;
 
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${proto}://${window.location.host}/ws?token=${encodeURIComponent(
-      token,
-    )}`;
+    const wsUrl = `${proto}://${window.location.host}/ws?token=${encodeURIComponent(token)}`;
 
     setStatus('connecting');
     const ws = new WebSocket(wsUrl);
@@ -128,6 +122,19 @@ export function useNanoclaw(): NanoclawState {
             },
           ]);
           break;
+        case 'generic_card':
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: 'generic_card',
+              id: frame.id,
+              title: frame.title,
+              body: frame.body,
+              links: frame.links,
+              fallbackText: frame.fallbackText,
+            },
+          ]);
+          break;
         case 'card_resolved':
           setItems((prev) =>
             prev.map((item) =>
@@ -166,10 +173,7 @@ export function useNanoclaw(): NanoclawState {
       ws.onmessage = null;
       ws.onclose = null;
       ws.onerror = null;
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
       if (wsRef.current === ws) wsRef.current = null;
@@ -204,17 +208,11 @@ export function useNanoclaw(): NanoclawState {
   const chooseOption = useCallback((questionId: string, index: number) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(
-      JSON.stringify({ type: 'action', actionId: `ncq:${questionId}:${index}` }),
-    );
+    ws.send(JSON.stringify({ type: 'action', actionId: `ncq:${questionId}:${index}` }));
     // Immediately mark the card pending so every button is disabled and
     // double-clicks are impossible; the terminal state arrives via card_resolved.
     setItems((prev) =>
-      prev.map((item) =>
-        item.kind === 'card' && item.questionId === questionId
-          ? { ...item, pending: true }
-          : item,
-      ),
+      prev.map((item) => (item.kind === 'card' && item.questionId === questionId ? { ...item, pending: true } : item)),
     );
   }, []);
 

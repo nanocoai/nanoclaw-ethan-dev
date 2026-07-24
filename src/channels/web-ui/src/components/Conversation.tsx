@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ConversationItem } from '../types';
 import { Message } from './Message';
 import { ApprovalCard } from './ApprovalCard';
+import { GenericCard } from './GenericCard';
 import { TypingDots } from './TypingDots';
 
 export function Conversation({
@@ -43,18 +44,34 @@ export function Conversation({
           </div>
         ) : (
           <>
-            {items.map((item) =>
-              item.kind === 'message' ? (
-                <Message key={item.id} message={item} />
-              ) : (
-                <ApprovalCard
-                  key={item.id}
-                  card={item}
-                  onChoose={onChoose}
-                  disabled={!connected}
-                />
-              ),
-            )}
+            {items.map((item) => {
+              if (item.kind === 'message') {
+                return <Message key={item.id} message={item} />;
+              }
+              if (item.kind === 'card') {
+                return (
+                  <ApprovalCard
+                    key={item.id}
+                    card={item}
+                    onChoose={onChoose}
+                    disabled={!connected}
+                  />
+                );
+              }
+              // generic_card — if there's nothing renderable (no title, no
+              // body, no links), fall back to plain text rather than
+              // showing an empty card shell.
+              const renderable = Boolean(item.title) || item.body.length > 0 || item.links.length > 0;
+              if (!renderable) {
+                return (
+                  <Message
+                    key={item.id}
+                    message={{ kind: 'message', id: item.id, role: 'assistant', content: item.fallbackText }}
+                  />
+                );
+              }
+              return <GenericCard key={item.id} card={item} />;
+            })}
             {typing && <TypingDots />}
           </>
         )}

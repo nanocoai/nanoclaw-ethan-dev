@@ -33,12 +33,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 
 import { log } from '../log.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
-import type {
-  ChannelAdapter,
-  ChannelDefaults,
-  ChannelSetup,
-  OutboundMessage,
-} from './adapter.js';
+import type { ChannelAdapter, ChannelDefaults, ChannelSetup, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 
 const CHANNEL_TYPE = 'web';
@@ -77,10 +72,7 @@ const CONTENT_TYPES: Record<string, string> = {
  * paths agree: new format = the button carries the integer option index;
  * old/degenerate format = the value is passed through untouched.
  */
-function resolveSelectedOption(
-  render: { options: NormalizedOption[] } | undefined,
-  candidate: string,
-): string {
+function resolveSelectedOption(render: { options: NormalizedOption[] } | undefined, candidate: string): string {
   if (render && /^\d+$/.test(candidate)) {
     const idx = Number(candidate);
     if (render.options[idx]) return render.options[idx].value;
@@ -369,6 +361,68 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
             style: opt.style,
           })),
         });
+        return messageId;
+      }
+
+      // Display card (send_card MCP tool) — a generic, non-interactive card.
+      // Mirrors the Chat SDK bridge's `content.type === 'card'` branch
+      // (chat-sdk-bridge.ts deliver(), ~L466-514 on origin/main — the
+      // channels-branch bridge predates this feature, so main is the
+      // authoritative shape). No callback buttons: only `url` actions render,
+      // as plain links (send_card's contract is fire-and-forget).
+      if (content.type === 'card' && content.card && typeof content.card === 'object') {
+        const cardSpec = content.card as Record<string, unknown>;
+        const title = (cardSpec.title as string) || '';
+        const description = (cardSpec.description as string) || '';
+
+        const body: string[] = [];
+        if (description) body.push(description);
+        if (Array.isArray(cardSpec.children)) {
+          for (const child of cardSpec.children) {
+            if (typeof child === 'string' && child) {
+              body.push(child);
+            } else if (
+              child &&
+              typeof child === 'object' &&
+              typeof (child as Record<string, unknown>).text === 'string'
+            ) {
+              body.push((child as Record<string, string>).text);
+            }
+          }
+        }
+
+        const links: Array<{ label: string; url: string; style?: NormalizedOption['style'] }> = [];
+        if (Array.isArray(cardSpec.actions)) {
+          for (const action of cardSpec.actions as Array<Record<string, unknown>>) {
+            if (typeof action.url === 'string' && action.url && typeof action.label === 'string' && action.label) {
+              const style = action.style;
+              links.push({
+                label: action.label,
+                url: action.url,
+                style: style === 'primary' || style === 'danger' || style === 'default' ? style : undefined,
+              });
+            }
+          }
+        }
+
+        const fallbackText = (content.fallbackText as string) || description || title || '';
+
+        if (body.length === 0 && links.length === 0 && !title) {
+          if (fallbackText) {
+            // Nothing structured to render, but the producer gave us a
+            // fallback string — show it as a plain message rather than
+            // silently dropping the delivery (deliberate divergence from the
+            // bridge, which drops here unconditionally).
+            const messageId = nextId('msg');
+            broadcast({ type: 'message', id: messageId, role: 'assistant', content: fallbackText });
+            return messageId;
+          }
+          log.warn('send_card payload empty, skipping delivery');
+          return undefined;
+        }
+
+        const messageId = nextId('gcard');
+        broadcast({ type: 'generic_card', id: messageId, title, body, links, fallbackText });
         return messageId;
       }
 
