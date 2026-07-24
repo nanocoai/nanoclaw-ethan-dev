@@ -426,6 +426,7 @@ export function useNanoclaw(): NanoclawState {
           case 'generic_card':
           case 'card_resolved':
           case 'edit':
+          case 'file':
             // Idempotent on seq: a frame already folded in (live, or via an
             // earlier history merge) is a no-op rather than a duplicate.
             if (seenSeqsRef.current.has(frame.seq)) break;
