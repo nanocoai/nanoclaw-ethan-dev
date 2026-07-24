@@ -38,6 +38,18 @@ export interface TypingFrame {
   on: boolean;
 }
 
+/**
+ * App-level heartbeat, broadcast every ~30s (web.ts). Browsers cannot
+ * observe protocol-level WS pings from JS, so this frame is what the
+ * client's deadman timer actually watches for — see useNanoclaw.ts. Carries
+ * no `seq`: it is never recorded into replay history (server-side emit() is
+ * bypassed entirely for this frame), so it must not appear in a 'history'
+ * replay and must not affect merge/dedupe logic below.
+ */
+export interface HeartbeatFrame {
+  type: 'heartbeat';
+}
+
 // `seq` is a monotonically increasing frame counter stamped server-side
 // (web.ts emit()) on every frame that gets recorded into replay history —
 // everything below except TypingFrame/ReadyFrame/HistoryFrame itself. The
@@ -112,6 +124,7 @@ export interface EditFrame {
 export type ServerFrame =
   | ReadyFrame
   | TypingFrame
+  | HeartbeatFrame
   | MessageFrame
   | CardFrame
   | CardResolvedFrame

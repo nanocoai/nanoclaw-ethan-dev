@@ -80,10 +80,13 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
 }
 
 /** Frame types that carry a `seq` (everything emit()-recorded server-side). */
-type SeqFrame = Exclude<ServerFrame, { type: 'ready' } | { type: 'typing' } | { type: 'history' }>;
+type SeqFrame = Exclude<
+  ServerFrame,
+  { type: 'ready' } | { type: 'typing' } | { type: 'heartbeat' } | { type: 'history' }
+>;
 
 function hasSeq(frame: ServerFrame): frame is SeqFrame {
-  return frame.type !== 'ready' && frame.type !== 'typing' && frame.type !== 'history';
+  return frame.type !== 'ready' && frame.type !== 'typing' && frame.type !== 'heartbeat' && frame.type !== 'history';
 }
 
 /**
@@ -113,6 +116,19 @@ function mergeHistoryFrames(alreadyApplied: SeqFrame[], replayed: ServerFrame[])
 // `typing:false` (live, or applied from the 'ready' frame on reconnect)
 // clears it immediately.
 const TYPING_TIMEOUT_MS = 12000;
+
+// Half-open-socket deadman: a server restart (or anything that drops the TCP
+// connection without a FIN/RST reaching this tab, e.g. the reboot drill that
+// found this bug) leaves the browser's WebSocket sitting open with no close
+// event ever firing — the SPA looks connected and hears nothing forever.
+// Protocol-level pings (web.ts's isAlive pattern) are invisible to JS, so
+// instead this timer resets on ANY incoming frame — including the app-level
+// `heartbeat` broadcast every ~30s (see types.ts HeartbeatFrame) — and force-
+// closes the socket if ~75s pass with nothing at all. A forced close is a
+// NORMAL close (not 4401), so it falls straight into the existing
+// exponential-backoff reconnect path below rather than needing its own
+// recovery logic.
+const HEARTBEAT_DEADMAN_MS = 75000;
 
 const TOKEN_KEY = 'nanoclaw_web_token';
 
@@ -232,6 +248,14 @@ export function useNanoclaw(): NanoclawState {
     let cancelled = false;
     let attempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let deadmanTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearDeadman = () => {
+      if (deadmanTimer !== null) {
+        clearTimeout(deadmanTimer);
+        deadmanTimer = null;
+      }
+    };
 
     const connect = () => {
       if (cancelled) return;
@@ -243,11 +267,26 @@ export function useNanoclaw(): NanoclawState {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
+      // Re-armed on open and on every frame below; expiry force-closes THIS
+      // socket (a plain close, not 4401) so onclose's normal backoff path
+      // takes over — see HEARTBEAT_DEADMAN_MS.
+      const armDeadman = () => {
+        clearDeadman();
+        deadmanTimer = setTimeout(() => {
+          ws.close();
+        }, HEARTBEAT_DEADMAN_MS);
+      };
+      armDeadman();
+
       ws.onopen = () => {
         attempt = 0; // a clean connect resets the backoff
+        armDeadman();
       };
 
       ws.onmessage = (event) => {
+        // Any frame at all — including the app-level heartbeat — proves the
+        // socket is still alive, so reset the deadman before even parsing.
+        armDeadman();
         let frame: ServerFrame;
         try {
           frame = JSON.parse(String(event.data)) as ServerFrame;
@@ -265,6 +304,11 @@ export function useNanoclaw(): NanoclawState {
             break;
           case 'typing':
             applyTyping(frame.on);
+            break;
+          case 'heartbeat':
+            // No-op beyond the armDeadman() above — this frame exists only
+            // so the deadman timer has something to see on an otherwise
+            // quiet connection. Never carries a `seq`, never touches items.
             break;
           case 'history': {
             // Merge the replay log with whatever this connection already
@@ -294,6 +338,7 @@ export function useNanoclaw(): NanoclawState {
 
       ws.onclose = (event) => {
         if (wsRef.current === ws) wsRef.current = null;
+        clearDeadman();
         if (cancelled) return;
 
         if (event.code === 4401) {
@@ -318,6 +363,7 @@ export function useNanoclaw(): NanoclawState {
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearDeadman();
       clearTypingTimer();
       const ws = wsRef.current;
       if (ws) {

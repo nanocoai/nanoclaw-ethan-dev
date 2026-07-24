@@ -41,6 +41,19 @@ const PLATFORM_ID = 'local';
 const DEFAULT_PORT = 7890;
 const DEFAULT_HOST = '127.0.0.1';
 
+// Half-open-socket detection (found in a reboot drill: a server restart
+// leaves a connected browser tab on a TCP socket that never gets a close
+// event — no FIN/RST arrives, so the tab just sits there looking connected
+// and hearing nothing until the tab is manually refreshed). Two independent
+// mechanisms, one per direction:
+//  - protocol-level ping/pong (standard `ws` isAlive pattern below): lets the
+//    SERVER notice a dead client and terminate() the socket.
+//  - an app-level heartbeat frame broadcast on the same interval: browsers
+//    cannot observe protocol-level pings from JS, so the CLIENT instead runs
+//    a deadman timer reset by any incoming frame (see useNanoclaw.ts) and
+//    force-closes itself if nothing — not even a heartbeat — arrives in time.
+const HEARTBEAT_INTERVAL_MS = 30000;
+
 /**
  * The web UI is a browser: every message the operator types is for the agent
  * (pattern '.'), the shared token gates access so senders are trusted
@@ -139,6 +152,15 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   let server: http.Server | null = null;
   let wss: WebSocketServer | null = null;
   const clients = new Set<WebSocket>();
+
+  // Standard `ws` isAlive pattern: a WeakMap keyed on the socket (rather than
+  // monkey-patching an `isAlive` property onto it) so a client that's already
+  // gone gets garbage-collected instead of leaking an entry. Set true when a
+  // client (re)connects and on every pong; the heartbeat interval below
+  // flips it false before each ping and terminates any socket still false a
+  // tick later — i.e. one that missed a pong entirely.
+  const aliveClients = new WeakMap<WebSocket, boolean>();
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   // Per-question render metadata, so a click can resolve its option index back
   // to the real value + selectedLabel (the native-adapter stand-in for the
@@ -385,6 +407,8 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           // numbers stamped in emit() are the fallback the client reducer
           // relies on to merge instead of silently losing the overlap.
           clients.add(ws);
+          aliveClients.set(ws, true);
+          ws.on('pong', () => aliveClients.set(ws, true));
           log.info('Web client connected', { clients: clients.size });
           // Replay everything we remember BEFORE 'ready', so the SPA rebuilds
           // its conversation before it flips to the connected state — this is
@@ -417,9 +441,36 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           resolve();
         });
       });
+
+      // One interval drives both halves of half-open-socket detection (see
+      // the HEARTBEAT_INTERVAL_MS comment above). Order matters: ping/check
+      // first so a socket terminated this tick doesn't also receive the
+      // heartbeat broadcast below.
+      heartbeatTimer = setInterval(() => {
+        for (const ws of clients) {
+          if (aliveClients.get(ws) === false) {
+            log.warn('Terminating unresponsive web client (missed heartbeat pong)');
+            clients.delete(ws);
+            ws.terminate();
+            continue;
+          }
+          aliveClients.set(ws, false);
+          ws.ping();
+        }
+        // App-level heartbeat, broadcast-only (never emit()): the client
+        // deadman timer resets on ANY incoming frame, but this frame must
+        // never enter the seq'd replay history — it carries no `seq` and
+        // deliberately bypasses emit() so it can't disturb frameSeq or get
+        // replayed to a reconnecting client (see emit()'s docs above).
+        broadcast({ type: 'heartbeat' });
+      }, HEARTBEAT_INTERVAL_MS);
     },
 
     async teardown(): Promise<void> {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
       for (const ws of clients) {
         try {
           ws.close();
