@@ -10,16 +10,24 @@ function connect(token) {
 }
 
 async function main() {
-  // 1. Bad token must be rejected at upgrade.
-  await new Promise((resolve) => {
+  // 1. Bad token: the server completes the WS handshake (so the browser
+  // gets a real close code, not an opaque 1006) then immediately closes with
+  // app-level code 4401 — see web.ts's upgrade handler.
+  await new Promise((resolve, reject) => {
     const bad = connect('wrong-token');
-    bad.on('open', () => {
-      console.error('FAIL: bad token was accepted');
-      process.exit(1);
+    const timer = setTimeout(() => reject(new Error('timeout waiting for 4401 close')), 5000);
+    bad.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 4401) {
+        console.error(`FAIL: expected close code 4401 for bad token, got ${code}`);
+        process.exit(1);
+      }
+      console.log('OK   bad token rejected with close 4401');
+      resolve();
     });
     bad.on('error', () => {
-      console.log('OK   bad token rejected at upgrade');
-      resolve();
+      // The `ws` client library may also raise a benign error event around
+      // the close; the close-code assertion above is the real check.
     });
   });
 

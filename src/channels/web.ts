@@ -358,9 +358,21 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           return;
         }
         if (!tokenMatches(token, url.searchParams.get('token'))) {
-          // 4401 (app-level unauthorized) is what the SPA listens for.
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-          socket.destroy();
+          // Complete the WS handshake rather than rejecting the HTTP upgrade
+          // with a raw 401: the browser's WebSocket API cannot see an HTTP
+          // status code on a failed upgrade, only an opaque close code 1006
+          // (no reason, indistinguishable from a network blip) — which is
+          // why the SPA used to retry forever with backoff instead of
+          // showing the login/token screen. Accepting, then immediately
+          // closing with app-level code 4401 gives the client something it
+          // CAN act on: useNanoclaw.ts's onclose special-cases 4401 to clear
+          // the stored token and show the login screen instead of
+          // reconnecting. Never added to `clients`, so it never touches
+          // history/broadcast.
+          wss!.handleUpgrade(req, socket, head, (ws) => {
+            log.info('Web client rejected: bad token');
+            ws.close(4401, 'invalid token');
+          });
           return;
         }
         wss!.handleUpgrade(req, socket, head, (ws) => {
