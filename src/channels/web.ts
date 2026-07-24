@@ -383,9 +383,19 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
    * broadcast() has nobody to send it to right now. Every recorded frame
    * gets a monotonically increasing `seq` first, so a client that replays
    * `history` can tell exactly which live frames it already has.
+   *
+   * Also stamps a wall-clock `ts` (epoch ms) alongside `seq` — the message-
+   * timestamp feature. Stamped once, here, at the moment the frame is first
+   * recorded: a replayed history frame is the SAME object pushed below, so
+   * replay never re-stamps it — a reconnecting client sees the original send
+   * time, not the reconnect time. The two counters answer different
+   * questions (seq: "what order, and have I already applied this exact
+   * frame" / ts: "when, in wall-clock terms, for display") and deliberately
+   * don't derive one from the other.
    */
   function emit(frame: Record<string, unknown>): void {
     frame.seq = ++frameSeq;
+    frame.ts = Date.now();
     history.push(frame);
     if (history.length > HISTORY_LIMIT) history.shift();
     broadcast(frame);

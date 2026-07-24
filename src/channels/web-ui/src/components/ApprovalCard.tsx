@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import type { ChatCard, OptionStyle } from '../types';
+import { Timestamp } from './Timestamp';
 
 function optionClasses(style: OptionStyle | undefined, disabled: boolean) {
   const base =
@@ -48,10 +49,11 @@ export function ApprovalCard({
         data-question-id={card.questionId}
         data-resolved={resolved ? 'true' : 'false'}
       >
-        <div className="border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
           <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
             {card.title}
           </span>
+          <Timestamp ts={card.ts} />
         </div>
 
         <div className="px-4 py-4">

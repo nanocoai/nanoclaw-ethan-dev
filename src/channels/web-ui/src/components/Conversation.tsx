@@ -1,10 +1,42 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { ConversationItem } from '../types';
 import { Message } from './Message';
 import { ApprovalCard } from './ApprovalCard';
 import { GenericCard } from './GenericCard';
 import { AttachmentRow } from './AttachmentRow';
 import { TypingDots } from './TypingDots';
+import { DateSeparator } from './DateSeparator';
+import { isSameLocalDay, formatDateSeparator } from '../time';
+
+/** A date-separator row interleaved between conversation items. */
+interface SeparatorRow {
+  row: 'separator';
+  key: string;
+  label: string;
+}
+
+type RenderRow = { row: 'item'; item: ConversationItem } | SeparatorRow;
+
+/**
+ * Interleave date-separator rows wherever the local calendar day changes
+ * between consecutive TIMESTAMPED items. Items without a `ts` (backward-compat
+ * — see types.ts) are rendered in place but never themselves trigger a
+ * separator and never reset the "last seen day" — so a single untimestamped
+ * item in the middle of a run doesn't spuriously split it.
+ */
+function withDateSeparators(items: ConversationItem[]): RenderRow[] {
+  const rows: RenderRow[] = [];
+  let lastTs: number | undefined;
+  for (const item of items) {
+    const ts = 'ts' in item ? item.ts : undefined;
+    if (ts !== undefined && (lastTs === undefined || !isSameLocalDay(lastTs, ts))) {
+      rows.push({ row: 'separator', key: `sep-${item.kind}-${item.id}`, label: formatDateSeparator(ts) });
+    }
+    if (ts !== undefined) lastTs = ts;
+    rows.push({ row: 'item', item });
+  }
+  return rows;
+}
 
 export function Conversation({
   items,
@@ -30,6 +62,7 @@ export function Conversation({
   }, [items, typing]);
 
   const empty = items.length === 0 && !typing;
+  const rows = useMemo(() => withDateSeparators(items), [items]);
 
   return (
     <div ref={scrollRef} className="scroll-area flex-1 overflow-y-auto">
@@ -47,7 +80,11 @@ export function Conversation({
           </div>
         ) : (
           <>
-            {items.map((item) => {
+            {rows.map((row) => {
+              if (row.row === 'separator') {
+                return <DateSeparator key={row.key} label={row.label} />;
+              }
+              const item = row.item;
               if (item.kind === 'message') {
                 return <Message key={item.id} message={item} />;
               }

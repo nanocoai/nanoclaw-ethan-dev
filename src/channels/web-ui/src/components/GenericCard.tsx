@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import type { ChatGenericCard, OptionStyle } from '../types';
+import { Timestamp } from './Timestamp';
 
 function linkClasses(style: OptionStyle | undefined) {
   const base =
@@ -35,14 +36,15 @@ export function GenericCard({ card }: { card: ChatGenericCard }) {
         className="w-full max-w-[80%] overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/70 shadow-[0_1px_0_0_rgba(255,255,255,0.02)_inset]"
         data-testid="generic-card"
       >
-        {card.title && (
-          <div className="border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
+        {(card.title || card.ts !== undefined) && (
+          <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
             <span
               className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500"
               data-testid="generic-card-title"
             >
               {card.title}
             </span>
+            <Timestamp ts={card.ts} />
           </div>
         )}
 

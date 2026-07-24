@@ -18,7 +18,13 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
       // existing item, so they always fall through to a plain append — no
       // behavior change there.
       const index = items.findIndex((item) => item.id === frame.id);
-      const applied: ChatMessage = { kind: 'message', id: frame.id, role: frame.role, content: frame.content };
+      const applied: ChatMessage = {
+        kind: 'message',
+        id: frame.id,
+        role: frame.role,
+        content: frame.content,
+        ts: frame.ts,
+      };
       if (index === -1) return [...items, applied];
       const next = items.slice();
       next[index] = applied;
@@ -35,6 +41,7 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
           question: frame.question,
           options: frame.options,
           pending: false,
+          ts: frame.ts,
         },
       ];
     case 'generic_card':
@@ -47,6 +54,7 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
           body: frame.body,
           links: frame.links,
           fallbackText: frame.fallbackText,
+          ts: frame.ts,
         },
       ];
     case 'card_resolved':
@@ -73,14 +81,24 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
           mime: frame.mime,
           size: frame.size,
           downloadPath: frame.downloadPath,
+          ts: frame.ts,
         },
       ];
     case 'edit': {
       // Replace whichever message or card carries this id with a plain
       // assistant message showing the edited content. An id we don't know
-      // about gets appended rather than dropped.
+      // about gets appended rather than dropped. `ts` reflects the EDIT's
+      // own stamp (when the edit landed), not whatever the original
+      // message/card carried — the row's displayed time is "when this
+      // content became true", which an edit changes.
       const index = items.findIndex((item) => item.id === frame.id);
-      const edited: ChatMessage = { kind: 'message', id: frame.id, role: 'assistant', content: frame.content };
+      const edited: ChatMessage = {
+        kind: 'message',
+        id: frame.id,
+        role: 'assistant',
+        content: frame.content,
+        ts: frame.ts,
+      };
       if (index === -1) return [...items, edited];
       const next = items.slice();
       next[index] = edited;

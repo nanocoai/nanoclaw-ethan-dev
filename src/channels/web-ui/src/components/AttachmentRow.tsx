@@ -1,19 +1,7 @@
 import { useState } from 'react';
 import type { ChatFile } from '../types';
-
-/** Human-readable byte size (1024-based) — good enough for a chat attachment row. */
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '? B';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value >= 10 ? Math.round(value) : Math.round(value * 10) / 10} ${units[unitIndex]}`;
-}
+import { formatBytes } from '../format';
+import { Timestamp } from './Timestamp';
 
 /** Appends the shared token the same way the WS connection does — a plain `?token=` query param. */
 function withToken(downloadPath: string, token: string): string {
@@ -68,7 +56,7 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
 
   if (isImage) {
     return (
-      <div className="nano-fade-in flex w-full px-4 py-2">
+      <div className="nano-fade-in flex w-full flex-col px-4 py-2">
         <a
           href={href}
           target="_blank"
@@ -90,6 +78,7 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
             onError={() => setUnavailable(true)}
           />
         </a>
+        <Timestamp ts={file.ts} className="mt-1" />
       </div>
     );
   }
@@ -99,7 +88,7 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
   // an evicted or post-restart file — surfaces as the "no longer available"
   // state above instead of a silent browser-level failure.
   return (
-    <div className="nano-fade-in flex w-full px-4 py-2">
+    <div className="nano-fade-in flex w-full flex-col px-4 py-2">
       <button
         type="button"
         data-testid="attachment-file"
@@ -140,6 +129,7 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
         </div>
         <span className="shrink-0 text-xs font-medium text-indigo-400">download</span>
       </button>
+      <Timestamp ts={file.ts} className="mt-1" />
     </div>
   );
 }

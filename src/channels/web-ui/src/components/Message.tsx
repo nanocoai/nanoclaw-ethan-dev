@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import type { ChatMessage } from '../types';
 import { Markdown } from './Markdown';
+import { Timestamp } from './Timestamp';
 
 /** Small assistant identity dot, reused by the typing indicator. */
 export function AssistantAvatar() {
@@ -17,13 +18,14 @@ export function Message({ message }: { message: ChatMessage }) {
   if (isUser) {
     return (
       <div
-        className="nano-fade-in flex w-full justify-end px-4 py-2"
+        className="nano-fade-in flex w-full flex-col items-end px-4 py-2"
         data-testid="message"
         data-role="user"
       >
         <div className="max-w-[75%] whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm border border-zinc-700/60 bg-zinc-800/70 px-4 py-2.5 text-[15px] leading-relaxed text-zinc-100">
           {message.content}
         </div>
+        <Timestamp ts={message.ts} className="mt-1 mr-1" />
       </div>
     );
   }
@@ -37,6 +39,7 @@ export function Message({ message }: { message: ChatMessage }) {
       <AssistantAvatar />
       <div className="min-w-0 max-w-[80%] pt-0.5">
         <Markdown content={message.content} />
+        <Timestamp ts={message.ts} className="mt-1 block" />
       </div>
     </div>
   );

@@ -64,6 +64,14 @@ export interface HeartbeatFrame {
 // client reducer uses it to merge a replayed 'history' snapshot with
 // whatever it already applied live, instead of a destructive overwrite —
 // see useNanoclaw.ts applyServerFrame / mergeHistoryFrames.
+//
+// `ts` (epoch ms, wall-clock) is stamped alongside `seq` by the same emit()
+// call, so it's present on every frame below with the same reach as `seq`.
+// Optional rather than required: a frame recorded by a server that predates
+// timestamp support (or a hand-crafted frame in a test) may omit it, and the
+// client's contract for that is "don't show a time" — never a fallback like
+// "now" or "00:00" — see Timestamp.tsx. Replayed history frames carry
+// whatever `ts` they were originally stamped with; nothing re-stamps them.
 
 export interface MessageFrame {
   type: 'message';
@@ -71,6 +79,7 @@ export interface MessageFrame {
   role: 'assistant' | 'user';
   content: string;
   seq: number;
+  ts?: number;
 }
 
 export interface CardFrame {
@@ -81,6 +90,7 @@ export interface CardFrame {
   question: string;
   options: CardOption[];
   seq: number;
+  ts?: number;
 }
 
 export interface CardResolvedFrame {
@@ -112,6 +122,7 @@ export interface GenericCardFrame {
   links: CardLink[];
   fallbackText: string;
   seq: number;
+  ts?: number;
 }
 
 /**
@@ -127,6 +138,7 @@ export interface EditFrame {
   id: string;
   content: string;
   seq: number;
+  ts?: number;
 }
 
 /**
@@ -144,6 +156,7 @@ export interface FileFrame {
   size: number;
   downloadPath: string;
   seq: number;
+  ts?: number;
 }
 
 export type ServerFrame =
@@ -198,6 +211,8 @@ export interface ChatMessage {
   id: string;
   role: 'assistant' | 'user';
   content: string;
+  /** Absent for the optimistic local echo (see useNanoclaw.ts sendMessage) until the server-confirmed frame replaces it. */
+  ts?: number;
 }
 
 export interface ChatCard {
@@ -211,6 +226,7 @@ export interface ChatCard {
   pending: boolean;
   /** present once the card has reached its terminal chosen state. */
   resolution?: CardResolution;
+  ts?: number;
 }
 
 export interface ChatGenericCard {
@@ -220,6 +236,7 @@ export interface ChatGenericCard {
   body: string[];
   links: CardLink[];
   fallbackText: string;
+  ts?: number;
 }
 
 export interface ChatFile {
@@ -229,6 +246,7 @@ export interface ChatFile {
   mime: string;
   size: number;
   downloadPath: string;
+  ts?: number;
 }
 
 export type ConversationItem = ChatMessage | ChatCard | ChatGenericCard | ChatFile;
