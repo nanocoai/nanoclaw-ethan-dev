@@ -81,6 +81,10 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
           mime: frame.mime,
           size: frame.size,
           downloadPath: frame.downloadPath,
+          // Backward compat: a frame from before files-IN existed has no
+          // `role` at all — treat that exactly like the pre-existing
+          // outbound-only behavior (left-aligned assistant-style card).
+          role: frame.role ?? 'assistant',
           ts: frame.ts,
         },
       ];
@@ -259,8 +263,18 @@ export interface NanoclawState {
    * the very first mismatch (that one reloads automatically instead).
    */
   bundleStale: boolean;
+  /**
+   * Files-IN: the most recent /upload failure's server-reported message
+   * (400/413/etc — see web.ts handleUpload), or null once cleared/succeeded.
+   * Distinct from a composer's own pre-flight validation (too-many-files,
+   * too-big — checked client-side in PromptInput before ever calling
+   * sendMessage) — this one is specifically "the server rejected it".
+   */
+  uploadError: string | null;
+  clearUploadError: () => void;
   login: (token: string) => void;
-  sendMessage: (text: string) => void;
+  /** `files` (if any) trigger the multipart /upload path instead of the WS user_message frame — see uploadFiles(). */
+  sendMessage: (text: string, files?: File[]) => void;
   chooseOption: (questionId: string, index: number) => void;
 }
 
@@ -272,6 +286,7 @@ export function useNanoclaw(): NanoclawState {
   const [typing, setTyping] = useState(false);
   const [authError, setAuthError] = useState(false);
   const [bundleStale, setBundleStale] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -516,26 +531,71 @@ export function useNanoclaw(): NanoclawState {
     [clearTypingTimer],
   );
 
-  const sendMessage = useCallback((text: string) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    // Generate the id BEFORE sending and reuse it for both the wire frame and
-    // the optimistic local echo below — web.ts echoes this same id back on
-    // the recorded MessageFrame, which is what lets applyServerFrame's
-    // find-or-append replace this echo in place instead of duplicating it
-    // once the server-confirmed (seq-bearing) frame arrives.
-    const clientId = `local-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    ws.send(JSON.stringify({ type: 'user_message', text, clientId }));
-    setItems((prev) => [
-      ...prev,
-      {
-        kind: 'message',
-        id: clientId,
-        role: 'user',
-        content: text,
-      },
-    ]);
-  }, []);
+  // Files-IN: POSTs a multipart /upload (token in the query string, same
+  // convention as the WS upgrade and the /files/ download route). No
+  // optimistic local echo here — unlike the plain-text WS path below, the
+  // user's message-bubble AND each file row all arrive as ordinary emit()'d
+  // frames over THIS SAME already-open WS connection (web.ts handleUpload:
+  // a 'message' frame for the caption, then a 'file' frame per upload,
+  // role:'user') — unavoidably as good as instant, and one fewer place that
+  // could duplicate/diverge from what the server actually recorded.
+  const uploadFiles = useCallback(
+    async (text: string, files: File[]) => {
+      setUploadError(null);
+      try {
+        const form = new FormData();
+        if (text) form.append('text', text);
+        for (const file of files) form.append('file', file, file.name);
+        const res = await fetch(`/upload?token=${encodeURIComponent(token ?? '')}`, {
+          method: 'POST',
+          body: form,
+        });
+        if (!res.ok) {
+          let message = `upload failed (${res.status})`;
+          try {
+            const body: unknown = await res.json();
+            if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+              message = (body as { error: string }).error;
+            }
+          } catch {
+            // non-JSON error body — fall back to the generic status message above
+          }
+          setUploadError(message);
+        }
+      } catch {
+        setUploadError('upload failed — network error');
+      }
+    },
+    [token],
+  );
+
+  const sendMessage = useCallback(
+    (text: string, files: File[] = []) => {
+      if (files.length > 0) {
+        void uploadFiles(text, files);
+        return;
+      }
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Generate the id BEFORE sending and reuse it for both the wire frame and
+      // the optimistic local echo below — web.ts echoes this same id back on
+      // the recorded MessageFrame, which is what lets applyServerFrame's
+      // find-or-append replace this echo in place instead of duplicating it
+      // once the server-confirmed (seq-bearing) frame arrives.
+      const clientId = `local-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+      ws.send(JSON.stringify({ type: 'user_message', text, clientId }));
+      setItems((prev) => [
+        ...prev,
+        {
+          kind: 'message',
+          id: clientId,
+          role: 'user',
+          content: text,
+        },
+      ]);
+    },
+    [uploadFiles],
+  );
 
   const chooseOption = useCallback((questionId: string, index: number) => {
     const ws = wsRef.current;
@@ -548,6 +608,8 @@ export function useNanoclaw(): NanoclawState {
     );
   }, []);
 
+  const clearUploadError = useCallback(() => setUploadError(null), []);
+
   return {
     bootstrapped,
     token,
@@ -556,6 +618,8 @@ export function useNanoclaw(): NanoclawState {
     typing,
     authError,
     bundleStale,
+    uploadError,
+    clearUploadError,
     login,
     sendMessage,
     chooseOption,

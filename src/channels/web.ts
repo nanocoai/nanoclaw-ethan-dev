@@ -133,6 +133,139 @@ interface RegisteredFile {
 const FILE_COUNT_LIMIT = 50;
 const FILE_BYTES_LIMIT = 100 * 1024 * 1024;
 
+// ---- Files-IN (upload) ----
+//
+// A hand-rolled multipart/form-data reader — deliberately not a dependency
+// (busboy/multer/formidable): this file's whole design point is "arch-neutral,
+// plain Node + ws" (see the file header), and the parsing this single-user
+// demo needs (a handful of small parts, no streaming-to-disk) is a couple
+// hundred lines, not a reason to pull in a body-parsing framework.
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // ~25MB/file
+const MAX_FILES_PER_MESSAGE = 5;
+// Multipart framing (boundaries, headers) adds overhead on top of the raw
+// file bytes; this cap is checked BEFORE parsing (both against the
+// Content-Length header and while streaming the body in) so an oversized
+// request is rejected without ever buffering MAX_FILES_PER_MESSAGE full-size
+// files in memory just to find out it's too big.
+const MAX_UPLOAD_BODY_BYTES = MAX_FILES_PER_MESSAGE * MAX_FILE_BYTES + 2 * 1024 * 1024;
+
+class UploadError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Mime types trusted straight from the browser's multipart Content-Type for
+ * an uploaded part. Deliberately the same safety stance as outbound files
+ * (ATTACHMENT_MIME_TYPES above): an upload's reported Content-Type is
+ * attacker-influenceable (FormData lets JS set an arbitrary `type` on a
+ * File/Blob independent of its actual bytes or extension), so anything NOT
+ * on this allow-list — e.g. `image/svg+xml`, which the SPA would otherwise
+ * happily inline as `<img>` and which can carry a `<script>` — falls back to
+ * the same extension-derived mimeForFilename() the outbound path uses.
+ */
+const ALLOWED_UPLOAD_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'application/json',
+  'text/plain',
+  'text/csv',
+  'application/zip',
+]);
+
+function sanitizeUploadMime(reported: string | undefined, filename: string): string {
+  const clean = (reported ?? '').split(';')[0].trim().toLowerCase();
+  if (clean && ALLOWED_UPLOAD_MIME_TYPES.has(clean)) return clean;
+  return mimeForFilename(filename);
+}
+
+function parseMultipartBoundary(contentType: string | undefined): string {
+  const match = /boundary="?([^";]+)"?/i.exec(contentType ?? '');
+  if (!match) throw new UploadError(400, 'missing multipart boundary');
+  return match[1];
+}
+
+interface MultipartPart {
+  /** The form field name (`name="..."` in Content-Disposition). */
+  name: string;
+  /** Present only for file parts (`filename="..."`); empty for plain fields. */
+  filename: string;
+  contentType: string;
+  data: Buffer;
+}
+
+/**
+ * Minimal multipart/form-data reader: split on the boundary, then split each
+ * part's headers from its body on the first blank line. Safe for binary file
+ * data because the boundary search runs on the raw Buffer (never a string
+ * conversion of the whole body) — only each part's HEADER block is decoded
+ * as text, the body bytes are sliced straight out of the original buffer.
+ * Relies on the boundary itself being long and random enough never to
+ * collide with a file's actual bytes — true of every browser-generated
+ * FormData boundary, which is what this endpoint is built for.
+ */
+function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
+  const boundaryMarker = Buffer.from(`--${boundary}`);
+  const parts: MultipartPart[] = [];
+  let start = body.indexOf(boundaryMarker);
+  while (start !== -1) {
+    const nextStart = body.indexOf(boundaryMarker, start + boundaryMarker.length);
+    if (nextStart === -1) break; // no further boundary — `start` was the closing `--boundary--`
+    let partBuf = body.subarray(start + boundaryMarker.length, nextStart);
+    if (partBuf.subarray(0, 2).toString('latin1') === '\r\n') partBuf = partBuf.subarray(2);
+    if (partBuf.subarray(-2).toString('latin1') === '\r\n') partBuf = partBuf.subarray(0, -2);
+
+    const headerEnd = partBuf.indexOf('\r\n\r\n');
+    if (headerEnd !== -1) {
+      const headerStr = partBuf.subarray(0, headerEnd).toString('utf8');
+      const data = partBuf.subarray(headerEnd + 4);
+      const nameMatch = /name="([^"]*)"/.exec(headerStr);
+      const filenameMatch = /filename="([^"]*)"/.exec(headerStr);
+      const contentTypeMatch = /Content-Type:\s*([^\r\n]+)/i.exec(headerStr);
+      if (nameMatch) {
+        // Undo the backslash-escaping browsers apply to `"` / `\` inside a
+        // quoted Content-Disposition parameter (mirrors
+        // contentDispositionHeader's own escaping on the way out).
+        const unescape = (s: string) => s.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        parts.push({
+          name: unescape(nameMatch[1]),
+          filename: filenameMatch ? unescape(filenameMatch[1]) : '',
+          contentType: contentTypeMatch ? contentTypeMatch[1].trim() : 'application/octet-stream',
+          data,
+        });
+      }
+    }
+    start = nextStart;
+  }
+  return parts;
+}
+
+/** Read the whole request body, aborting (rejecting) the moment it exceeds `capBytes` — never buffers past the cap. */
+function readBodyCapped(req: http.IncomingMessage, capBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    req.on('data', (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > capBytes) {
+        req.destroy();
+        reject(new UploadError(413, 'upload too large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', (err) => reject(err));
+  });
+}
+
 /**
  * Resolve a clicked button back to its option value. Copied verbatim from
  * the Chat SDK bridge (chat-sdk-bridge.ts resolveSelectedOption) so the two
@@ -245,6 +378,13 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   let wss: WebSocketServer | null = null;
   const clients = new Set<WebSocket>();
 
+  // Files-IN (upload): the ChannelSetup handed to setup(), held so the
+  // HTTP-only /upload handler (serveStatic, defined below, has no other
+  // route to it) can call onInbound() the same way the WS message handler
+  // does. Always set by the time a request can arrive — the HTTP server
+  // itself is only created inside setup(), after this assignment.
+  let currentConfig: ChannelSetup | null = null;
+
   // P2b: the SPA build fingerprint handed to clients in the `ready` frame.
   // Computed once per setup() (see the setup() body below) from whatever this
   // adapter instance is ACTUALLY serving, so a re-deploy (new process, fresh
@@ -306,7 +446,12 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
    * zero-length buffer — so deliver() can fall back to a plain "could not
    * be relayed" message instead of silently dropping it.
    */
-  function registerFile(file: OutboundFile | null | undefined): RegisteredFile | null {
+  // `mimeOverride`: the upload path (files-IN) already knows a real
+  // browser-reported (and allow-list-sanitized, see sanitizeUploadMime)
+  // Content-Type, which is more accurate than guessing from the extension —
+  // outbound files (OutboundFile carries no mime at all) omit it and keep
+  // the existing mimeForFilename(extension) behavior unchanged.
+  function registerFile(file: OutboundFile | null | undefined, mimeOverride?: string): RegisteredFile | null {
     if (
       !file ||
       typeof file.filename !== 'string' ||
@@ -320,7 +465,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     const registered: RegisteredFile = {
       id,
       filename: path.basename(file.filename),
-      mime: mimeForFilename(file.filename),
+      mime: mimeOverride && mimeOverride.trim() ? mimeOverride.trim() : mimeForFilename(file.filename),
       size: file.data.length,
       data: file.data,
     };
@@ -401,6 +546,143 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     broadcast(frame);
   }
 
+  /**
+   * Files-IN. Parses a multipart/form-data POST (`file` parts, plus an
+   * optional plain `text` field), registers each file the same way an
+   * outbound attachment is registered (same map, same eviction caps — "mind
+   * the eviction caps" per the design brief), renders each as a `file` frame
+   * with `role: 'user'`, and hands the whole turn to the host with an
+   * attachment shape that mirrors the Chat SDK bridge's
+   * (chat-sdk-bridge.ts messageToInbound, `serialized.attachments`)
+   * byte-for-byte: `{ type, name, mimeType, size, data(base64) }` per file —
+   * so the host's extractAttachmentFiles/attachment-naming/attachment-safety
+   * pipeline (session-manager.ts) treats a web upload exactly like a
+   * downloaded chat-sdk attachment, no new host-side shape to support.
+   */
+  async function handleUpload(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    try {
+      const contentLengthHeader = req.headers['content-length'];
+      if (contentLengthHeader && Number(contentLengthHeader) > MAX_UPLOAD_BODY_BYTES) {
+        throw new UploadError(413, 'upload too large');
+      }
+      const boundary = parseMultipartBoundary(req.headers['content-type']);
+      const body = await readBodyCapped(req, MAX_UPLOAD_BODY_BYTES);
+      const parts = parseMultipart(body, boundary);
+
+      const textPart = parts.find((p) => p.name === 'text' && !p.filename);
+      const fileParts = parts.filter((p) => p.filename);
+
+      if (fileParts.length === 0) throw new UploadError(400, 'no files in upload');
+      if (fileParts.length > MAX_FILES_PER_MESSAGE) {
+        throw new UploadError(400, `too many files (max ${MAX_FILES_PER_MESSAGE} per message)`);
+      }
+      for (const part of fileParts) {
+        if (part.data.length === 0) throw new UploadError(400, `"${part.filename}" is empty`);
+        if (part.data.length > MAX_FILE_BYTES) {
+          throw new UploadError(413, `"${part.filename}" exceeds the 25MB limit`);
+        }
+      }
+
+      if (!currentConfig) throw new UploadError(503, 'channel not ready');
+
+      const text = textPart ? textPart.data.toString('utf8').trim() : '';
+
+      // The user's own text, rendered as a normal user message bubble — same
+      // frame shape and history treatment as a plain WS user_message (see
+      // handleClientFrame below), just triggered from the HTTP upload path
+      // instead of the WS socket. Files are emitted below, AFTER this, so a
+      // caption reads above its attachment (comment mirrors the WS path's
+      // "record the operator's own message" note).
+      if (text) {
+        emit({ type: 'message', id: nextId('user'), role: 'user', content: text });
+      }
+
+      const registeredFiles: RegisteredFile[] = [];
+      for (const part of fileParts) {
+        const mime = sanitizeUploadMime(part.contentType, part.filename);
+        const registered = registerFile({ filename: part.filename, data: part.data }, mime);
+        if (!registered) continue; // the size/emptiness checks above already rule this out in practice
+        registeredFiles.push(registered);
+        // role: 'user' — reuses the exact same 'file' frame type an outbound
+        // (assistant) attachment uses (see deliver() below), just aligned to
+        // the other side by AttachmentRow.tsx. This is why files-IN needed no
+        // new frame type, and so no new case in the SPA's onmessage switch /
+        // reducer / SeqFrame exclusion list — only a field on the existing one.
+        emit({
+          type: 'file',
+          id: registered.id,
+          name: registered.filename,
+          mime: registered.mime,
+          size: registered.size,
+          downloadPath: `/files/${registered.id}`,
+          role: 'user',
+        });
+      }
+
+      // A real user turn just started — clear any stale typing indicator,
+      // same as the plain-text WS path (setTypingState(false) further down
+      // in deliver()).
+      setTypingState(false);
+
+      // Mirror the Chat SDK bridge's attachment enrichment byte-for-byte
+      // (chat-sdk-bridge.ts messageToInbound, ~L160-190): each entry carries
+      // type/name/mimeType/size/data — width/height are the bridge's for
+      // image/video attachments with known dimensions, which a browser file
+      // upload has no equivalent of, so they're omitted here exactly as the
+      // bridge itself omits them for attachments it can't measure.
+      const attachments = registeredFiles.map((f) => ({
+        type: f.mime.startsWith('image/') ? 'image' : 'file',
+        name: f.filename,
+        mimeType: f.mime,
+        size: f.size,
+        data: f.data.toString('base64'),
+      }));
+
+      const content: Record<string, unknown> = {
+        sender: 'web',
+        senderId: `${CHANNEL_TYPE}:${PLATFORM_ID}`,
+        attachments,
+      };
+      if (text) content.text = text;
+
+      void Promise.resolve(
+        currentConfig.onInbound(PLATFORM_ID, null, {
+          id: nextId('web'),
+          kind: 'chat',
+          timestamp: new Date().toISOString(),
+          content,
+          isMention: true,
+          isGroup: false,
+        }),
+      ).catch((err) => log.error('onInbound threw (upload)', { err }));
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          ok: true,
+          files: registeredFiles.map((f) => ({
+            id: f.id,
+            name: f.filename,
+            size: f.size,
+            downloadPath: `/files/${f.id}`,
+          })),
+        }),
+      );
+    } catch (err) {
+      const status = err instanceof UploadError ? err.status : 400;
+      const message = err instanceof Error ? err.message : 'upload failed';
+      if (!(err instanceof UploadError)) log.warn('Upload failed unexpectedly', { err });
+      try {
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: message }));
+      } catch {
+        // response may already be half-written/closed (e.g. socket
+        // destroyed by readBodyCapped on an oversized body) — nothing more
+        // to do.
+      }
+    }
+  }
+
   function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', `http://${host}`);
     let pathname = decodeURIComponent(url.pathname);
@@ -438,6 +720,25 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       // AttachmentRow.tsx's "no longer available" check — without pulling
       // the whole body over the wire).
       res.end(req.method === 'HEAD' ? undefined : file.data);
+      return;
+    }
+
+    // Files-IN — multipart upload. Auth checked BEFORE anything else (same
+    // tokenMatches gate, same query-param convention as /files/ above),
+    // before even the method/body is looked at, so a bad token can't be used
+    // to probe endpoint behavior.
+    if (pathname === '/upload') {
+      if (!tokenMatches(token, url.searchParams.get('token'))) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'method not allowed' }));
+        return;
+      }
+      void handleUpload(req, res);
       return;
     }
 
@@ -559,6 +860,8 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     defaults: WEB_DEFAULTS,
 
     async setup(config: ChannelSetup): Promise<void> {
+      currentConfig = config;
+
       // P2b: resolve the bundle fingerprint once per setup(), from whatever
       // is ACTUALLY on disk under staticRoot right now — never a stale value
       // held over from a previous setup() in this same process (a
@@ -730,6 +1033,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
               mime: registered.mime,
               size: registered.size,
               downloadPath: `/files/${registered.id}`,
+              role: 'assistant',
             });
             lastFileMessageId = registered.id;
           } else {

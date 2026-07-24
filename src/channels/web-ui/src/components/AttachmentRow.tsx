@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import type { ChatFile } from '../types';
 import { formatBytes } from '../format';
 import { Timestamp } from './Timestamp';
@@ -10,22 +11,24 @@ function withToken(downloadPath: string, token: string): string {
 }
 
 /**
- * One outbound attachment (P2a). image/* mime gets an inline, click-to-open
- * thumbnail; everything else gets a download card. Either shape can end up
- * "no longer available" if the file was evicted from the server's bounded
- * in-memory map (or the process restarted) after the frame was recorded —
- * the download link still LOOKS fine in a replayed history until it's
- * actually used, so failure is only detectable at fetch/load time, not
- * render time.
+ * One file attachment — outbound (the agent sent it, P2a) or inbound (the
+ * user uploaded it, files-IN), distinguished by `file.role`. image/* mime
+ * gets an inline, click-to-open thumbnail; everything else gets a download
+ * card. Either shape can end up "no longer available" if the file was
+ * evicted from the server's bounded in-memory map (or the process
+ * restarted) after the frame was recorded — the download link still LOOKS
+ * fine in a replayed history until it's actually used, so failure is only
+ * detectable at fetch/load time, not render time.
  */
 export function AttachmentRow({ file, token }: { file: ChatFile; token: string | null }) {
   const [unavailable, setUnavailable] = useState(false);
+  const isUser = file.role === 'user';
 
   // Malformed/unknown file frame (missing the fields we need to render or
   // download) — never render nothing, show a visible placeholder instead.
   if (!file.name || !file.downloadPath) {
     return (
-      <div className="nano-fade-in flex w-full px-4 py-2">
+      <div className={clsx('nano-fade-in flex w-full px-4 py-2', isUser && 'justify-end')}>
         <div
           className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-2.5 text-sm text-zinc-400"
           data-testid="attachment-placeholder"
@@ -42,7 +45,7 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
 
   if (unavailable) {
     return (
-      <div className="nano-fade-in flex w-full px-4 py-2">
+      <div className={clsx('nano-fade-in flex w-full px-4 py-2', isUser && 'justify-end')}>
         <div
           className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-2.5 text-sm text-zinc-500"
           data-testid="attachment-unavailable"
@@ -56,7 +59,11 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
 
   if (isImage) {
     return (
-      <div className="nano-fade-in flex w-full flex-col px-4 py-2">
+      <div
+        className={clsx('nano-fade-in flex w-full flex-col px-4 py-2', isUser && 'items-end')}
+        data-testid="attachment-row"
+        data-role={file.role}
+      >
         <a
           href={href}
           target="_blank"
@@ -86,9 +93,16 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
   // Download card: filename, human size, explicit download action. Fetches
   // itself (rather than a bare `<a href download>`) so a failed download —
   // an evicted or post-restart file — surfaces as the "no longer available"
-  // state above instead of a silent browser-level failure.
+  // state above instead of a silent browser-level failure. `isUser` swaps
+  // the border/background for the same treatment Message.tsx gives a user
+  // text bubble, so an uploaded file reads as "the same side" as the user's
+  // own messages.
   return (
-    <div className="nano-fade-in flex w-full flex-col px-4 py-2">
+    <div
+      className={clsx('nano-fade-in flex w-full flex-col px-4 py-2', isUser && 'items-end')}
+      data-testid="attachment-row"
+      data-role={file.role}
+    >
       <button
         type="button"
         data-testid="attachment-file"
@@ -111,7 +125,12 @@ export function AttachmentRow({ file, token }: { file: ChatFile; token: string |
             setUnavailable(true);
           }
         }}
-        className="flex w-full max-w-[80%] items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-left transition-colors hover:bg-zinc-900"
+        className={clsx(
+          'flex w-full max-w-[80%] items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-colors',
+          isUser
+            ? 'border-zinc-700/60 bg-zinc-800/70 hover:bg-zinc-800'
+            : 'border-zinc-800 bg-zinc-900/70 hover:bg-zinc-900',
+        )}
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400">
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">

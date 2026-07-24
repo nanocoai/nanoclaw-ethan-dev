@@ -142,11 +142,21 @@ export interface EditFrame {
 }
 
 /**
- * Outbound file attachment (P2a). `id` doubles as the attachment's registry
- * id server-side — `downloadPath` is literally `/files/<id>` (web.ts) — so
- * there's a single id to track, not a separate message-id/file-id pair.
- * `mime` is server-derived from the filename extension (OutboundFile itself
- * carries no mime type, see adapter.ts).
+ * A file attachment — outbound (P2a, the agent sent it) or inbound (files-IN,
+ * the user uploaded it): one frame type, distinguished by `role`. `id`
+ * doubles as the attachment's registry id server-side — `downloadPath` is
+ * literally `/files/<id>` (web.ts) — so there's a single id to track, not a
+ * separate message-id/file-id pair. `mime` is server-derived: from the
+ * filename extension for outbound files (OutboundFile itself carries no mime
+ * type, see adapter.ts), or from the browser's reported Content-Type
+ * (sanitized against an allow-list, see web.ts sanitizeUploadMime) for an
+ * upload.
+ *
+ * `role` picks which side's alignment/styling AttachmentRow.tsx uses — 'user'
+ * right-aligned like a user message bubble, 'assistant' (or absent) the
+ * pre-existing left-aligned card. Optional and defaults to 'assistant' at the
+ * reducer for backward compat: every FileFrame before files-IN existed was
+ * implicitly outbound.
  */
 export interface FileFrame {
   type: 'file';
@@ -155,6 +165,7 @@ export interface FileFrame {
   mime: string;
   size: number;
   downloadPath: string;
+  role?: 'user' | 'assistant';
   seq: number;
   ts?: number;
 }
@@ -246,6 +257,8 @@ export interface ChatFile {
   mime: string;
   size: number;
   downloadPath: string;
+  /** Always resolved to a concrete value at the reducer — see applyServerFrame's 'file' case — never left as the wire frame's optional/absent form. */
+  role: 'user' | 'assistant';
   ts?: number;
 }
 
