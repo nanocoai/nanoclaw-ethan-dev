@@ -54,6 +54,10 @@ let deliver!: (
 ) => Promise<string | undefined>;
 let setTyping!: (platformId: string, threadId: string | null) => Promise<void>;
 
+// Pending release for the 'ghost typing test' scenario (see onInbound below)
+// — set while that scenario is awaiting its SIGUSR1, null otherwise.
+let resolveGhostTypingRelease: (() => void) | null = null;
+
 /** Text of an inbound `user_message` — used to pick which demo scenario to play. */
 function inboundText(message: InboundMessage): string {
   const content = message.content as Record<string, unknown> | undefined;
@@ -127,6 +131,28 @@ const setup: ChannelSetup = {
         content: { operation: 'edit', messageId: 'never-delivered-id', text: 'Edit for an id nobody has seen.' },
       });
       record('editForUnknownIdApplied', {});
+      return;
+    }
+
+    if (text === 'ghost typing test') {
+      // Ghost-typing proof scaffold (scripts/browser-proof-typing-ghost.mjs).
+      // Sets typing:true, then BLOCKS the turn on an external release instead
+      // of a fixed delay — this is what lets the proof script deterministically
+      // control when the server's typing:false actually fires, instead of
+      // racing it against the SPA's own reconnect backoff. Send SIGUSR1 to
+      // this process to release the hold; the turn then completes normally
+      // (typing:false + a recorded markdown message).
+      await setTyping(PLATFORM_ID, null);
+      record('ghostTypingStarted', {});
+      await new Promise<void>((resolve) => {
+        resolveGhostTypingRelease = resolve;
+      });
+      record('ghostTypingReleased', {});
+      await deliver(PLATFORM_ID, null, {
+        kind: 'chat-sdk',
+        content: { markdown: 'ghost typing test — turn completed after the release signal.' },
+      });
+      record('ghostTypingDelivered', {});
       return;
     }
 
@@ -216,6 +242,19 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200));
     await adapter.setup(setup);
     console.log('BOUNCE WS/HTTP layer back up');
+  });
+
+  // Ghost-typing proof release: unblocks a pending 'ghost typing test' turn
+  // (see onInbound) so the proof script can decide EXACTLY when the server's
+  // typing:false fires, relative to a SIGUSR2 bounce and the SPA's own
+  // reconnect — deterministic instead of racing wall-clock delays.
+  process.on('SIGUSR1', () => {
+    console.log('SIGNAL SIGUSR1 received — releasing ghost-typing test hold, if any');
+    if (resolveGhostTypingRelease) {
+      const release = resolveGhostTypingRelease;
+      resolveGhostTypingRelease = null;
+      release();
+    }
   });
 
   const shutdown = async () => {

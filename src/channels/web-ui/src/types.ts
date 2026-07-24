@@ -24,6 +24,13 @@ export interface CardResolution {
 export interface ReadyFrame {
   type: 'ready';
   threadId: string | null;
+  /**
+   * Current server-side typing state at connect time. Typing frames are
+   * transient (never recorded into `history`), so a (re)connecting client
+   * needs this to start truthful instead of carrying over whatever `typing`
+   * value it had before the drop — see useNanoclaw.ts's 'ready' handling.
+   */
+  typing: boolean;
 }
 
 export interface TypingFrame {

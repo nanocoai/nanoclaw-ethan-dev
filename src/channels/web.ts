@@ -162,6 +162,21 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   let seq = 0;
   const nextId = (prefix: string) => `${prefix}-${Date.now()}-${(seq++).toString(36)}`;
 
+  // Current typing state, tracked here (not just fired-and-forgotten through
+  // broadcast()) so a (re)connecting client can be told the truth on its
+  // 'ready' frame instead of starting from a blind guess. Typing frames stay
+  // transient — excluded from `history` by design (see HISTORY_LIMIT comment
+  // above) — this is a SEPARATE single-boolean piece of state, not a frame
+  // log, so it costs nothing to keep it live across a teardown()+setup()
+  // bounce (same adapter-instance closure) or a client that was never
+  // subscribed when the last change broadcast.
+  let typingState = false;
+
+  function setTypingState(on: boolean): void {
+    typingState = on;
+    broadcast({ type: 'typing', on });
+  }
+
   // Monotonic sequence stamped on every RECORDED frame (see emit() below) —
   // separate from the id counter above, which also numbers frames that never
   // go through emit() (e.g. card_resolved shares nextId's messageId space
@@ -364,7 +379,13 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           // what makes a reconnect (dropped socket, or the whole ws layer
           // bouncing) look seamless instead of blank.
           ws.send(JSON.stringify({ type: 'history', frames: history }));
-          ws.send(JSON.stringify({ type: 'ready', threadId: null }));
+          // Carry the CURRENT typing state so a (re)connecting client starts
+          // truthful instead of stuck on whatever `typing` value it had
+          // before the drop — typing frames are transient and never land in
+          // `history`, so without this a client that missed the one
+          // clearing frame (dropped mid-turn, reconnected after the server
+          // already went quiet) would show ghost dots forever.
+          ws.send(JSON.stringify({ type: 'ready', threadId: null, typing: typingState }));
           ws.on('message', (data) => handleClientFrame(data.toString('utf8'), config));
           ws.on('close', () => {
             clients.delete(ws);
@@ -526,7 +547,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       }
 
       // Typing off — a real message supersedes any streaming indicator.
-      broadcast({ type: 'typing', on: false });
+      setTypingState(false);
 
       // Normal message — prefer markdown, fall back to text (mirrors the
       // bridge's rawText = content.markdown || content.text).
@@ -542,7 +563,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
 
     async setTyping(platformId): Promise<void> {
       if (platformId !== PLATFORM_ID) return;
-      broadcast({ type: 'typing', on: true });
+      setTypingState(true);
     },
   };
 

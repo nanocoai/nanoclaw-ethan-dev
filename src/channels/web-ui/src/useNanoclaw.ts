@@ -105,6 +105,15 @@ function mergeHistoryFrames(alreadyApplied: SeqFrame[], replayed: ServerFrame[])
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 
+// Ghost-typing guard: a browser that misses the single `typing:false`
+// clearing frame (typing frames are transient — excluded from `history`
+// replay by design, only broadcast on change, see web.ts) would otherwise
+// show the animated dots forever. Auto-expire ~12s after the last
+// `typing:true` unless a fresh one renews the timer; an explicit
+// `typing:false` (live, or applied from the 'ready' frame on reconnect)
+// clears it immediately.
+const TYPING_TIMEOUT_MS = 12000;
+
 const TOKEN_KEY = 'nanoclaw_web_token';
 
 function readToken(): string | null {
@@ -159,6 +168,36 @@ export function useNanoclaw(): NanoclawState {
   // frames, so replay and live delivery overlapping is always idempotent.
   const frameLogRef = useRef<SeqFrame[]>([]);
   const seenSeqsRef = useRef<Set<number>>(new Set());
+
+  // Single pending expiry timer for the ghost-typing guard — lives at the
+  // hook level (not inside connect()) so it survives a WS reconnect cycle
+  // unmolested: a dropped socket alone should NOT reset the countdown, only
+  // an explicit typing:false (live or via 'ready') or a fresh typing:true
+  // should. Always routed through clearTypingTimer/applyTyping so there is
+  // ever at most one live setTimeout — no leak across reconnects or repeated
+  // typing:true frames.
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTypingTimer = useCallback(() => {
+    if (typingTimerRef.current !== null) {
+      clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+  }, []);
+
+  const applyTyping = useCallback(
+    (on: boolean) => {
+      clearTypingTimer();
+      setTyping(on);
+      if (on) {
+        typingTimerRef.current = setTimeout(() => {
+          typingTimerRef.current = null;
+          setTyping(false);
+        }, TYPING_TIMEOUT_MS);
+      }
+    },
+    [clearTypingTimer],
+  );
 
   // Bootstrap the token exactly once: URL ?token= wins, then localStorage.
   // A URL token is persisted and then stripped from the visible address.
@@ -218,9 +257,14 @@ export function useNanoclaw(): NanoclawState {
         switch (frame.type) {
           case 'ready':
             setStatus('connected');
+            // Adopt the server's CURRENT typing state rather than whatever
+            // this connection's `typing` was left at before the drop — the
+            // ghost-typing fix's other half (see types.ts ReadyFrame.typing
+            // and web.ts's ready-frame send).
+            applyTyping(frame.typing);
             break;
           case 'typing':
-            setTyping(frame.on);
+            applyTyping(frame.on);
             break;
           case 'history': {
             // Merge the replay log with whatever this connection already
@@ -274,6 +318,7 @@ export function useNanoclaw(): NanoclawState {
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearTypingTimer();
       const ws = wsRef.current;
       if (ws) {
         // Detach handlers so StrictMode's dev double-invoke can't fire stale
@@ -290,17 +335,21 @@ export function useNanoclaw(): NanoclawState {
     };
   }, [token]);
 
-  const login = useCallback((raw: string) => {
-    const trimmed = raw.trim();
-    if (!trimmed) return;
-    storeToken(trimmed);
-    setAuthError(false);
-    setItems([]);
-    frameLogRef.current = [];
-    seenSeqsRef.current = new Set();
-    setTyping(false);
-    setToken(trimmed);
-  }, []);
+  const login = useCallback(
+    (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) return;
+      storeToken(trimmed);
+      setAuthError(false);
+      setItems([]);
+      frameLogRef.current = [];
+      seenSeqsRef.current = new Set();
+      clearTypingTimer();
+      setTyping(false);
+      setToken(trimmed);
+    },
+    [clearTypingTimer],
+  );
 
   const sendMessage = useCallback((text: string) => {
     const ws = wsRef.current;
