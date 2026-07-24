@@ -3,17 +3,20 @@ import type { ConversationItem } from '../types';
 import { Message } from './Message';
 import { ApprovalCard } from './ApprovalCard';
 import { GenericCard } from './GenericCard';
+import { AttachmentRow } from './AttachmentRow';
 import { TypingDots } from './TypingDots';
 
 export function Conversation({
   items,
   typing,
   connected,
+  token,
   onChoose,
 }: {
   items: ConversationItem[];
   typing: boolean;
   connected: boolean;
+  token: string | null;
   onChoose: (questionId: string, index: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -57,6 +60,9 @@ export function Conversation({
                     disabled={!connected}
                   />
                 );
+              }
+              if (item.kind === 'file') {
+                return <AttachmentRow key={item.id} file={item} token={token} />;
               }
               // generic_card — if there's nothing renderable (no title, no
               // body, no links), fall back to plain text rather than

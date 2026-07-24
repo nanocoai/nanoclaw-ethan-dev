@@ -63,6 +63,18 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
             }
           : item,
       );
+    case 'file':
+      return [
+        ...items,
+        {
+          kind: 'file',
+          id: frame.id,
+          name: frame.name,
+          mime: frame.mime,
+          size: frame.size,
+          downloadPath: frame.downloadPath,
+        },
+      ];
     case 'edit': {
       // Replace whichever message or card carries this id with a plain
       // assistant message showing the edited content. An id we don't know

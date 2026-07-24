@@ -121,6 +121,23 @@ export interface EditFrame {
   seq: number;
 }
 
+/**
+ * Outbound file attachment (P2a). `id` doubles as the attachment's registry
+ * id server-side — `downloadPath` is literally `/files/<id>` (web.ts) — so
+ * there's a single id to track, not a separate message-id/file-id pair.
+ * `mime` is server-derived from the filename extension (OutboundFile itself
+ * carries no mime type, see adapter.ts).
+ */
+export interface FileFrame {
+  type: 'file';
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  downloadPath: string;
+  seq: number;
+}
+
 export type ServerFrame =
   | ReadyFrame
   | TypingFrame
@@ -130,6 +147,7 @@ export type ServerFrame =
   | CardResolvedFrame
   | GenericCardFrame
   | EditFrame
+  | FileFrame
   | HistoryFrame;
 
 /**
@@ -196,4 +214,13 @@ export interface ChatGenericCard {
   fallbackText: string;
 }
 
-export type ConversationItem = ChatMessage | ChatCard | ChatGenericCard;
+export interface ChatFile {
+  kind: 'file';
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  downloadPath: string;
+}
+
+export type ConversationItem = ChatMessage | ChatCard | ChatGenericCard | ChatFile;

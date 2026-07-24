@@ -39,6 +39,7 @@ export default function App() {
         items={items}
         typing={typing}
         connected={connected}
+        token={token}
         onChoose={chooseOption}
       />
       <PromptInput disabled={!connected} onSend={sendMessage} />
