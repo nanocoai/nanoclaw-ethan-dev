@@ -6,10 +6,12 @@
 //                                bad token pass, and nothing makes it hang)
 //   - no header + VALID token -> ready, and NO userId (token auth carries no
 //                                identity — the field is omitted, not empty)
-//   - header + VALID token    -> ready with NO userId either: the documented
-//                                precedence is token first, header second, so
-//                                a token-authenticated connection never picks
-//                                up an identity it did not authenticate with
+//   - header + VALID token    -> ready WITH the header's userId: the token
+//                                still authenticates first (precedence
+//                                unchanged), but identity is orthogonal — a
+//                                trusted header present on the request is
+//                                reported either way, so a stored token from
+//                                the pre-identity era doesn't hide the login
 //   - no header + no token    -> close 4401 (the opt-in is not a free pass)
 // and /upload still accepts a valid token with no header at all.
 import { spawn } from 'node:child_process';
@@ -111,15 +113,17 @@ async function main() {
     console.log('OK   valid token + no header connects, ready frame carries no userId');
     good.ws.close();
 
-    // 4. Valid token AND header — token wins, so still no identity.
+    // 4. Valid token AND header — token authenticates (precedence unchanged),
+    // but identity is orthogonal: the trusted header's login is reported so a
+    // browser with a stored pre-identity token still shows who is connected.
     const both = await connect(`ws://127.0.0.1:${PORT}/ws?token=${encodeURIComponent(TOKEN)}`, {
       'Tailscale-User-Login': LOGIN,
     });
     if (!both.ready) fail(`valid token + header was rejected: ${JSON.stringify(both.close)}`);
-    if ('userId' in both.ready) {
-      fail(`token took precedence but the ready frame still carried userId="${both.ready.userId}"`);
+    if (both.ready.userId !== LOGIN) {
+      fail(`token + trusted header must carry the header identity; got userId=${JSON.stringify(both.ready.userId)}`);
     }
-    console.log('OK   valid token + header connects on the TOKEN path (precedence holds, no userId)');
+    console.log('OK   valid token + header connects, and the trusted identity rides along');
     both.ws.close();
 
     // 5. /upload with a valid token and no header at all.

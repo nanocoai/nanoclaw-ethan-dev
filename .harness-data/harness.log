@@ -1,0 +1,400 @@
+[22:11:14.012] [32mINFO[39m [36mWeb channel listening[39m [35murl[39m="http://127.0.0.1:7890" [35mtoken[39m="(from env)"
+HARNESS READY  event log: /home/exedev/nanoclaw-wt/web-channel/.harness-data/events.jsonl
+[22:11:25.631] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:26.199Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931086198-0","kind":"chat","timestamp":"2026-07-24T22:11:26.198Z","content":{"text":"deploy the arm64 build to production","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:11:26.707Z","event":"cardDelivered","questionId":"appr-1784931086703-pkn1ui"}
+RECORD {"ts":"2026-07-24T22:11:27.960Z","event":"onAction","questionId":"appr-1784931086703-pkn1ui","selectedOption":"approve","userId":"web:local"}
+[22:11:28.574] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:11:29.107] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:29.695Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931089695-3","kind":"chat","timestamp":"2026-07-24T22:11:29.695Z","content":{"text":"edit test","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:11:29.695Z","event":"editTargetDelivered","messageId":"msg-1784931089695-4"}
+RECORD {"ts":"2026-07-24T22:11:29.998Z","event":"editApplied","messageId":"msg-1784931089695-4"}
+RECORD {"ts":"2026-07-24T22:11:30.361Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931090361-5","kind":"chat","timestamp":"2026-07-24T22:11:30.361Z","content":{"text":"edit unknown","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:11:30.362] [33mWARN[39m [36mEditing a message id this adapter never delivered — forwarding anyway[39m [35mmessageId[39m="never-delivered-id"
+RECORD {"ts":"2026-07-24T22:11:30.362Z","event":"editForUnknownIdApplied"}
+[22:11:30.712] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:11:31.376] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:31.955Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931091955-6","kind":"chat","timestamp":"2026-07-24T22:11:31.955Z","content":{"text":"show generic card","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:11:31.955Z","event":"genericCardDelivered"}
+RECORD {"ts":"2026-07-24T22:11:32.526Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931092526-8","kind":"chat","timestamp":"2026-07-24T22:11:32.526Z","content":{"text":"show fallback card","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:11:32.526Z","event":"fallbackCardDelivered"}
+[22:11:33.042] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:11:33.640] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:34.235Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931094234-a","kind":"chat","timestamp":"2026-07-24T22:11:34.234Z","content":{"text":"show generic card","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:11:34.235Z","event":"genericCardDelivered"}
+RECORD {"ts":"2026-07-24T22:11:34.319Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931094319-c","kind":"chat","timestamp":"2026-07-24T22:11:34.319Z","content":{"text":"deploy the arm64 build to production","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+BOUNCE tearing down the WS/HTTP layer
+[22:11:34.819] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:11:34.821Z","event":"cardDelivered","questionId":"appr-1784931094821-hlzhi1"}
+[22:11:35.025] [32mINFO[39m [36mWeb channel listening[39m [35murl[39m="http://127.0.0.1:7890" [35mtoken[39m="(from env)"
+BOUNCE WS/HTTP layer back up
+[22:11:36.488] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:36.865Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931096865-f","kind":"chat","timestamp":"2026-07-24T22:11:36.865Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:11:37.092] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:11:37.368Z","event":"cardDelivered","questionId":"appr-1784931097367-7jrxuz"}
+[22:11:37.715] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:38.299Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931098298-i","kind":"chat","timestamp":"2026-07-24T22:11:38.299Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:11:38.496] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:11:38.522] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:38.803Z","event":"cardDelivered","questionId":"appr-1784931098802-7p61uc"}
+[22:11:39.555] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:11:39.572] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:11:40.619] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:11:41.247] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:41.866Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931101866-l","kind":"chat","timestamp":"2026-07-24T22:11:41.866Z","content":{"text":"ghost typing test","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:11:41.867Z","event":"ghostTypingStarted"}
+BOUNCE tearing down the WS/HTTP layer
+[22:11:42.069] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+SIGNAL SIGUSR1 received — releasing ghost-typing test hold, if any
+RECORD {"ts":"2026-07-24T22:11:42.087Z","event":"ghostTypingReleased"}
+RECORD {"ts":"2026-07-24T22:11:42.087Z","event":"ghostTypingDelivered"}
+[22:11:42.270] [32mINFO[39m [36mWeb channel listening[39m [35murl[39m="http://127.0.0.1:7890" [35mtoken[39m="(from env)"
+BOUNCE WS/HTTP layer back up
+[22:11:43.364] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:11:43.857Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931103857-n","kind":"chat","timestamp":"2026-07-24T22:11:43.857Z","content":{"text":"ghost typing test","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:11:43.858Z","event":"ghostTypingStarted"}
+SIGNAL SIGUSR1 received — releasing ghost-typing test hold, if any
+RECORD {"ts":"2026-07-24T22:11:57.286Z","event":"ghostTypingReleased"}
+RECORD {"ts":"2026-07-24T22:11:57.289Z","event":"ghostTypingDelivered"}
+[22:11:57.312] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:11:57.907] [32mINFO[39m [36mWeb client rejected: bad token[39m
+[22:12:02.687] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:12:03.003] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:12:10.047] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:12:10.631Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931130631-p","kind":"chat","timestamp":"2026-07-24T22:12:10.631Z","content":{"text":"send file","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:12:10.634Z","event":"fileDelivered","messageId":"ohon1tkKRsRhLQ306pMzXg","filename":"demo.png"}
+RECORD {"ts":"2026-07-24T22:12:11.205Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931131205-q","kind":"chat","timestamp":"2026-07-24T22:12:11.205Z","content":{"text":"send doc file","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+RECORD {"ts":"2026-07-24T22:12:11.206Z","event":"fileDelivered","messageId":"63YTiF4hLbBLk1ifW2uW9Q","filename":"notes.txt"}
+[22:12:12.063] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:25.448] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:25.452Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931325452-r","kind":"chat","timestamp":"2026-07-24T22:15:25.452Z","content":{"text":"p1b probe 1784931325441","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:25.454] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:25.657] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:25.664] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:25.796] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:25.800Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931325800-t","kind":"chat","timestamp":"2026-07-24T22:15:25.800Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:25.803] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:25.954Z","event":"cardDelivered","questionId":"appr-1784931325954-8sy4jf"}
+RECORD {"ts":"2026-07-24T22:15:26.304Z","event":"cardDelivered","questionId":"appr-1784931326303-eeoeup"}
+[22:15:27.003] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:27.008] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:27.049] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:27.052Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931327052-z","kind":"chat","timestamp":"2026-07-24T22:15:27.052Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:27.053] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:27.054] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:27.259] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:27.411] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:27.414] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:27.414] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:27.415Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931327415-12","kind":"chat","timestamp":"2026-07-24T22:15:27.415Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:27.416] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:27.434] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:27.555Z","event":"cardDelivered","questionId":"appr-1784931327555-7xojnx"}
+[22:15:27.636] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:27.788] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:27.790] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:27.791] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:27.792Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931327792-16","kind":"chat","timestamp":"2026-07-24T22:15:27.792Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:27.792] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:27.827] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:27.918Z","event":"cardDelivered","questionId":"appr-1784931327917-fft0oe"}
+[22:15:28.030] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:28.182] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:28.185] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:28.185] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:28.186Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931328186-1a","kind":"chat","timestamp":"2026-07-24T22:15:28.186Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:28.187] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:28.238] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:28.294Z","event":"cardDelivered","questionId":"appr-1784931328293-8qsru2"}
+[22:15:28.441] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:28.595] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:28.598] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:28.599] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:28.599Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931328599-1e","kind":"chat","timestamp":"2026-07-24T22:15:28.599Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:28.600] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:28.668] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:28.688Z","event":"cardDelivered","questionId":"appr-1784931328687-abre8f"}
+[22:15:28.871] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:29.022] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:29.024] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:29.025] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:29.025Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931329025-1i","kind":"chat","timestamp":"2026-07-24T22:15:29.025Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:29.026] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:29.102Z","event":"cardDelivered","questionId":"appr-1784931329102-xekh5e"}
+[22:15:29.111] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:29.314] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:29.466] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:29.469] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:29.470] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:29.470Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931329470-1m","kind":"chat","timestamp":"2026-07-24T22:15:29.470Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:29.471] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:29.528Z","event":"cardDelivered","questionId":"appr-1784931329527-mi3ajc"}
+[22:15:29.572] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:29.776] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:29.929] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:29.934] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:29.935] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:29.935Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931329935-1q","kind":"chat","timestamp":"2026-07-24T22:15:29.935Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:29.936] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:29.973Z","event":"cardDelivered","questionId":"appr-1784931329972-9d8rki"}
+[22:15:30.055] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:30.258] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:30.410] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:30.412] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:30.413] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:30.414Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931330414-1u","kind":"chat","timestamp":"2026-07-24T22:15:30.414Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:30.415] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:30.436Z","event":"cardDelivered","questionId":"appr-1784931330436-d8x6h6"}
+[22:15:30.549] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:30.752] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:30.904] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:30.906] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:30.907] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:30.907Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931330907-1y","kind":"chat","timestamp":"2026-07-24T22:15:30.907Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:30.908] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:30.916Z","event":"cardDelivered","questionId":"appr-1784931330915-6fr6ln"}
+[22:15:31.060] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:31.262] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:31.410Z","event":"cardDelivered","questionId":"appr-1784931331409-hljb2i"}
+[22:15:31.414] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:31.418] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:31.418] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:31.419Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931331419-23","kind":"chat","timestamp":"2026-07-24T22:15:31.419Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:31.419] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:31.588] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:31.791] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:31.923Z","event":"cardDelivered","questionId":"appr-1784931331923-3ks9i8"}
+[22:15:31.943] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:31.945] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:31.945] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:31.947Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931331947-27","kind":"chat","timestamp":"2026-07-24T22:15:31.947Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:31.947] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:32.131] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:32.334] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:32.450Z","event":"cardDelivered","questionId":"appr-1784931332450-2g73et"}
+[22:15:32.485] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:32.488] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:32.490] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:32.490Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931332490-2b","kind":"chat","timestamp":"2026-07-24T22:15:32.490Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:32.491] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:32.693] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:32.896] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:32.994Z","event":"cardDelivered","questionId":"appr-1784931332994-9dwule"}
+[22:15:33.047] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:33.050] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:33.051] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:33.052Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931333052-2f","kind":"chat","timestamp":"2026-07-24T22:15:33.052Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:33.053] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:33.272] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:33.473] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:33.555Z","event":"cardDelivered","questionId":"appr-1784931333555-3ehvik"}
+[22:15:33.625] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:33.626] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:33.627] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:33.627Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931333627-2j","kind":"chat","timestamp":"2026-07-24T22:15:33.627Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:33.628] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:33.864] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:34.067] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:34.130Z","event":"cardDelivered","questionId":"appr-1784931334130-0ohiv7"}
+[22:15:34.220] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:34.222] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:34.222] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:34.223Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931334223-2n","kind":"chat","timestamp":"2026-07-24T22:15:34.223Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:34.224] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:34.477] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:34.683] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:34.727Z","event":"cardDelivered","questionId":"appr-1784931334726-mr2gei"}
+[22:15:34.834] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:34.838] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:34.839] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:34.840Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931334840-2r","kind":"chat","timestamp":"2026-07-24T22:15:34.840Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:34.841] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:35.109] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:35.312] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:35.342Z","event":"cardDelivered","questionId":"appr-1784931335342-kh0uyw"}
+[22:15:35.463] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:35.465] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:35.466] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:35.466Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931335466-2v","kind":"chat","timestamp":"2026-07-24T22:15:35.466Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:35.467] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:35.752] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:35.955] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:35.968Z","event":"cardDelivered","questionId":"appr-1784931335968-qwhbrn"}
+[22:15:36.106] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:36.109] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:36.111] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:36.112Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931336112-2z","kind":"chat","timestamp":"2026-07-24T22:15:36.112Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:36.112] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:36.414] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:36.616Z","event":"cardDelivered","questionId":"appr-1784931336615-0aqoxp"}
+[22:15:36.617] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:36.769] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:36.771] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:36.772] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:36.772Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931336772-33","kind":"chat","timestamp":"2026-07-24T22:15:36.772Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:36.773] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:37.092] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:37.275Z","event":"cardDelivered","questionId":"appr-1784931337275-adc3i9"}
+[22:15:37.294] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:37.446] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:37.447] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:37.448] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:37.448Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931337448-37","kind":"chat","timestamp":"2026-07-24T22:15:37.448Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:37.448] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:37.784] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:37.950Z","event":"cardDelivered","questionId":"appr-1784931337950-0i4nyg"}
+[22:15:37.991] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:38.139] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:38.144] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:38.145] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:38.147Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931338147-3b","kind":"chat","timestamp":"2026-07-24T22:15:38.147Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:38.148] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:38.500] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:38.651Z","event":"cardDelivered","questionId":"appr-1784931338651-xipyts"}
+[22:15:38.702] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:38.855] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:38.858] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:38.860] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:38.861Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931338860-3f","kind":"chat","timestamp":"2026-07-24T22:15:38.860Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:38.861] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:39.229] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:39.366Z","event":"cardDelivered","questionId":"appr-1784931339365-n7xgyj"}
+[22:15:39.433] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:39.582] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:39.586] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:39.587] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:39.588Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931339588-3j","kind":"chat","timestamp":"2026-07-24T22:15:39.588Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:39.589] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:39.973] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:40.092Z","event":"cardDelivered","questionId":"appr-1784931340091-gujbft"}
+[22:15:40.178] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:40.329] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:40.332] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:40.333] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:40.335Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931340335-3n","kind":"chat","timestamp":"2026-07-24T22:15:40.335Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:40.336] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:40.737] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:40.839Z","event":"cardDelivered","questionId":"appr-1784931340838-xcn5v4"}
+[22:15:40.939] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:41.091] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:41.096] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:41.097] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:41.098Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931341098-3r","kind":"chat","timestamp":"2026-07-24T22:15:41.098Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:41.099] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:41.519] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:41.601Z","event":"cardDelivered","questionId":"appr-1784931341601-hc4ka3"}
+[22:15:41.723] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:41.877] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:41.879] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:41.882] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:41.884Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931341884-3v","kind":"chat","timestamp":"2026-07-24T22:15:41.884Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:41.884] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:42.320] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:42.385Z","event":"cardDelivered","questionId":"appr-1784931342385-g93una"}
+[22:15:42.522] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:42.674] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:42.678] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:42.679] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:42.679Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931342679-3z","kind":"chat","timestamp":"2026-07-24T22:15:42.679Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:42.680] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:43.131] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:43.183Z","event":"cardDelivered","questionId":"appr-1784931343182-zw7f8x"}
+[22:15:43.335] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:43.486] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:43.489] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:43.490] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:43.490Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931343490-43","kind":"chat","timestamp":"2026-07-24T22:15:43.490Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:43.491] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:43.962] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:43.993Z","event":"cardDelivered","questionId":"appr-1784931343993-xv3ow6"}
+[22:15:44.166] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:44.317] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:44.319] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:44.320] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:44.321Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931344321-47","kind":"chat","timestamp":"2026-07-24T22:15:44.321Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:44.321] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:44.807] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:44.824Z","event":"cardDelivered","questionId":"appr-1784931344823-5zf6x0"}
+[22:15:45.011] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:45.162] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:45.164] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:45.165] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:45.165Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931345165-4b","kind":"chat","timestamp":"2026-07-24T22:15:45.165Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:45.166] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:45.669Z","event":"cardDelivered","questionId":"appr-1784931345669-6xgktr"}
+[22:15:45.670] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:45.873] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:46.024] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:46.027] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:46.029] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:46.030Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931346030-4f","kind":"chat","timestamp":"2026-07-24T22:15:46.030Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:46.031] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:46.534Z","event":"cardDelivered","questionId":"appr-1784931346534-zy5yhw"}
+[22:15:46.551] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:46.754] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:46.907] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:46.908] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:46.909] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:46.909Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931346909-4j","kind":"chat","timestamp":"2026-07-24T22:15:46.909Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:46.909] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:47.412Z","event":"cardDelivered","questionId":"appr-1784931347412-cofgw4"}
+[22:15:47.447] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:47.651] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:47.803] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:47.806] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:47.807] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:47.808Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931347808-4n","kind":"chat","timestamp":"2026-07-24T22:15:47.808Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:47.809] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:48.313Z","event":"cardDelivered","questionId":"appr-1784931348312-15if7q"}
+[22:15:48.359] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:48.562] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:48.714] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:48.718] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:48.720] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:48.720Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931348720-4r","kind":"chat","timestamp":"2026-07-24T22:15:48.720Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:48.721] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:49.226Z","event":"cardDelivered","questionId":"appr-1784931349226-ca5m46"}
+[22:15:49.291] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:49.494] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:49.646] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:49.648] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:49.649] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:49.649Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931349649-4v","kind":"chat","timestamp":"2026-07-24T22:15:49.649Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:49.650] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:50.156Z","event":"cardDelivered","questionId":"appr-1784931350156-kj9258"}
+[22:15:50.234] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:50.438] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:50.590] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:50.594] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:50.595] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:50.596Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931350596-4z","kind":"chat","timestamp":"2026-07-24T22:15:50.596Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:50.597] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:51.098Z","event":"cardDelivered","questionId":"appr-1784931351098-o0mtjp"}
+[22:15:51.198] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:51.401] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:51.554] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:51.557] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:51.558] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:51.559Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931351559-53","kind":"chat","timestamp":"2026-07-24T22:15:51.559Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:51.559] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:52.062Z","event":"cardDelivered","questionId":"appr-1784931352061-9cgcwf"}
+[22:15:52.181] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:52.385] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:52.536] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:52.539] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:52.540] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:52.541Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931352541-57","kind":"chat","timestamp":"2026-07-24T22:15:52.541Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:52.542] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:53.045Z","event":"cardDelivered","questionId":"appr-1784931353045-r8sy3n"}
+[22:15:53.179] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:53.382] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:53.533] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:53.536] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=2
+[22:15:53.537] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=1
+RECORD {"ts":"2026-07-24T22:15:53.539Z","event":"onInbound","platformId":"local","threadId":null,"message":{"id":"web-1784931353539-5b","kind":"chat","timestamp":"2026-07-24T22:15:53.539Z","content":{"text":"ship it","sender":"web","senderId":"web:local"},"isMention":true,"isGroup":false}}
+[22:15:53.539] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+RECORD {"ts":"2026-07-24T22:15:54.042Z","event":"cardDelivered","questionId":"appr-1784931354042-y1p54k"}
+[22:15:54.193] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:54.397] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0
+[22:15:54.548] [32mINFO[39m [36mWeb client connected[39m [35mclients[39m=1
+[22:15:54.556] [32mINFO[39m [36mWeb client disconnected[39m [35mclients[39m=0

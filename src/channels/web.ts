@@ -532,19 +532,26 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
 
   /**
    * The ONE auth decision, shared by every authenticated entry point (the /ws
-   * upgrade, /files/<id> download, /upload). Fixed precedence:
-   *   1. a valid shared token   -> authenticated, identity unknown (userId undefined)
-   *   2. a trusted Tailscale-User-Login header -> authenticated as that login
+   * upgrade, /files/<id> download, /upload). Fixed AUTH precedence:
+   *   1. a valid shared token   -> authenticated
+   *   2. a trusted Tailscale-User-Login header -> authenticated
    *   3. neither                -> null; the caller rejects exactly as it did
    *                                before this feature (same status/close code)
+   * IDENTITY is orthogonal to which credential authenticated: whenever the
+   * trusted header is present (opt-in only, see trustedTailscaleLogin), its
+   * login is reported as userId — including on token-authenticated requests.
+   * A browser that kept a stored token from the pre-identity era would
+   * otherwise authenticate fine but show no login, which reads as a bug from
+   * the user's side. Attaching it costs nothing security-wise: under the
+   * opt-in the header alone could have authenticated the same request anyway.
    * Token first and unchanged (constant-time compare, never logged), so
    * nothing about the header path can weaken it. Returning `{}` rather than a
    * bare boolean is what lets callers tell "authenticated, no identity" from
    * "authenticated as someone" without a second lookup.
    */
   function authenticate(req: http.IncomingMessage, url: URL): { userId?: string } | null {
-    if (tokenMatches(token, url.searchParams.get('token'))) return {};
     const login = trustedTailscaleLogin(req);
+    if (tokenMatches(token, url.searchParams.get('token'))) return login ? { userId: login } : {};
     if (login) return { userId: login };
     return null;
   }
