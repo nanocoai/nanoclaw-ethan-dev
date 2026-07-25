@@ -58,3 +58,6 @@ import './whatsapp.js';
 
 // deltachat (native, no Chat SDK)
 // import './deltachat.js'
+
+// mattermost
+import './mattermost.js';
