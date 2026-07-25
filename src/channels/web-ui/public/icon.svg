@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- NanoClaw app icon. Two-tone, matches the SPA's dark-mode-only palette:
+       background = zinc-950 (app bg), foreground = zinc-100 (app text).
+       Glyph: a chat bubble with three claw-scratch cutouts. -->
+  <rect width="512" height="512" rx="96" fill="#09090b" />
+  <path
+    d="M144 140h224a48 48 0 0 1 48 48v112a48 48 0 0 1-48 48H206l-56 54v-54h-6a48 48 0 0 1-48-48V188a48 48 0 0 1 48-48z"
+    fill="#f4f4f5"
+  />
+  <g stroke="#09090b" stroke-width="16" stroke-linecap="round">
+    <line x1="330" y1="155" x2="385" y2="210" />
+    <line x1="300" y1="175" x2="355" y2="230" />
+    <line x1="270" y1="195" x2="325" y2="250" />
+  </g>
+</svg>

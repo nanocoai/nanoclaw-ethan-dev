@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Maskable variant: background fills the full square edge-to-edge (per the
+       maskable icon spec the OS applies its own mask/rounding on top), glyph
+       scaled down and centered so it survives an aggressive circular mask. -->
+  <rect width="512" height="512" fill="#09090b" />
+  <g transform="translate(256 256) scale(0.78) translate(-256 -256)">
+    <path
+      d="M144 140h224a48 48 0 0 1 48 48v112a48 48 0 0 1-48 48H206l-56 54v-54h-6a48 48 0 0 1-48-48V188a48 48 0 0 1 48-48z"
+      fill="#f4f4f5"
+    />
+    <g stroke="#09090b" stroke-width="16" stroke-linecap="round">
+      <line x1="330" y1="155" x2="385" y2="210" />
+      <line x1="300" y1="175" x2="355" y2="230" />
+      <line x1="270" y1="195" x2="325" y2="250" />
+    </g>
+  </g>
+</svg>

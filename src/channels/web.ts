@@ -180,6 +180,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.map': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
 };
 
 // P2a outbound attachments. OutboundFile (adapter.ts) carries only

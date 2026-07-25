@@ -5,6 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>nanoclaw</title>
+
+    <!-- PWA installability. No service worker on purpose: the app is useless
+         without the live WebSocket, so a SW would only add stale-bundle risk
+         (see the bundle-mismatch handling in src/channels/web.ts). This is
+         manifest + icons + meta only. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-180.png" />
+
+    <!-- The SPA is dark-mode-only today (no light theme exists yet — see
+         index.css), so both media queries below point at the same dark
+         background; this keeps browser chrome/splash color consistent with
+         what actually renders regardless of the OS-level preference. -->
+    <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
+
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="NanoClaw" />
   </head>
   <body>
     <div id="root"></div>
