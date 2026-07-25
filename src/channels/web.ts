@@ -44,13 +44,28 @@
  * compare runs first and unchanged, and the header is only ever consulted
  * under the explicit env opt-in.
  *
+ * Sessions (WU3): the UI shows several conversations in a sidebar, and one UI
+ * conversation IS one `threadId`. The host already keys agent sessions on
+ * (messaging_group_id, thread_id) and routes replies back through
+ * `deliver(platformId, threadId, ...)`, so passing a real per-conversation id
+ * out of `onInbound` — instead of the `null` this adapter used to pass — buys
+ * a distinct agent session (own continuation, own container lifecycle) per UI
+ * conversation with no core changes. `supportsThreads` therefore has to be
+ * true here: the router hard-strips thread ids from adapters that declare it
+ * false (src/router.ts), and the effective policy is
+ * (wiring ?? channelDefaults).threads AND supportsThreads
+ * (src/channels/channel-defaults.ts resolveThreadPolicy) — which is why the
+ * declared defaults below carry `threads: true` in both dm and group.
+ *
  * Replay history: every recorded frame is also mirrored to
- * `<DATA_DIR>/web-channel-history.jsonl` (append-only, periodically
- * compacted) so a process restart still has a conversation to replay, not
- * just a teardown()+setup() bounce in the same process — see the `history`/
- * `frameSeq` comments below for the seq-monotonicity guarantee this relies
- * on. Attachment BYTES are never persisted this way — see the `files` map
- * comment.
+ * `<DATA_DIR>/web-channel-history/<sessionId>.jsonl` (append-only,
+ * periodically compacted, one file per session) so a process restart still
+ * has conversations to replay, not just a teardown()+setup() bounce in the
+ * same process — see the session-registry comments below for the per-session
+ * seq-monotonicity guarantee this relies on. A pre-WU3 single
+ * `<DATA_DIR>/web-channel-history.jsonl` is adopted once, on boot, as the
+ * session `default`. Attachment BYTES are never persisted this way — see the
+ * `files` map comment.
  *
  * Single-user demo grade. Bind stays 127.0.0.1; expose via SSH/tailscale tunnel.
  */
@@ -93,14 +108,66 @@ const HEARTBEAT_INTERVAL_MS = 30000;
 /**
  * The web UI is a browser: every message the operator types is for the agent
  * (pattern '.'), the shared token gates access so senders are trusted
- * ('public'), there is no thread or platform-mention concept (DMs only).
- * Mirrors the CLI adapter's stance (src/channels/cli.ts CLI_DEFAULTS).
+ * ('public'), there is no platform-mention concept (DMs only). Mirrors the
+ * CLI adapter's stance (src/channels/cli.ts CLI_DEFAULTS), except for
+ * threads: WU3 makes one sidebar conversation one thread, so both contexts
+ * declare `threads: true`. The declaration is only half the policy —
+ * resolveThreadPolicy() ANDs it with `supportsThreads` (true below) and with
+ * the per-wiring `messaging_group_agents.threads` override, so an existing
+ * wiring that persisted `threads = 0` while this channel was non-threaded
+ * keeps collapsing threads until that row is updated.
  */
 const WEB_DEFAULTS: ChannelDefaults = {
-  dm: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'public' },
-  group: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'public' },
+  dm: { engageMode: 'pattern', engagePattern: '.', threads: true, unknownSenderPolicy: 'public' },
+  group: { engageMode: 'pattern', engagePattern: '.', threads: true, unknownSenderPolicy: 'public' },
   mentions: 'never',
 };
+
+// ---- Sessions (WU3) ----
+//
+// A session id is also a threadId (it crosses the adapter contract into the
+// host) AND a filename (`<sessionId>.jsonl` under the history dir), so it is
+// validated on every path that can receive one from outside this module: a
+// client op, a `deliver()` threadId, a filename found while rebuilding the
+// index. Anything failing this pattern is refused rather than sanitized —
+// there is no legitimate producer of such an id, and "sanitize it into
+// something valid" is how a `../` gets written to a file the adapter never
+// meant to touch.
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** The id a pre-WU3 single-file history is adopted under, exactly once, on boot. */
+const LEGACY_SESSION_ID = 'default';
+
+/** Titles are the first user message, openwebui-style, truncated for the sidebar. */
+const SESSION_TITLE_MAX = 60;
+
+function isValidSessionId(id: unknown): id is string {
+  return typeof id === 'string' && SESSION_ID_PATTERN.test(id);
+}
+
+function sessionTitleFrom(text: string): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (clean.length <= SESSION_TITLE_MAX) return clean;
+  return clean.slice(0, SESSION_TITLE_MAX - 1).trimEnd() + '…';
+}
+
+/** Metadata the sidebar renders and `index.json` persists. Never holds frames. */
+interface SessionMeta {
+  id: string;
+  /** Empty until the session's first user message names it; the SPA shows "New chat" for that. */
+  title: string;
+  createdAt: number;
+  lastActiveAt: number;
+}
+
+/** One live conversation: its metadata plus the same bounded ring + seq counter the single-conversation adapter used to keep globally. */
+interface SessionState {
+  meta: SessionMeta;
+  history: Record<string, unknown>[];
+  /** Per-session monotonic frame counter — see emit(). Restored from disk at cold start. */
+  frameSeq: number;
+  linesOnDisk: number;
+}
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -506,7 +573,13 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   // Per-question render metadata, so a click can resolve its option index back
   // to the real value + selectedLabel (the native-adapter stand-in for the
   // host's getAskQuestionRender DB read).
-  const renderStore = new Map<string, { title: string; options: NormalizedOption[]; messageId: string }>();
+  // `sessionId` rides along so a click resolves the card in the conversation
+  // it was asked in — the client never has to name a session for an action,
+  // and a card answered from a different tab still edits the right chat.
+  const renderStore = new Map<
+    string,
+    { title: string; options: NormalizedOption[]; messageId: string; sessionId: string }
+  >();
 
   // Every message/card id this adapter has handed back from deliver(), so an
   // operation:'edit' targeting an id we never produced can at least be logged
@@ -514,60 +587,87 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   // sanity check on our side.
   const deliveredMessageIds = new Set<string>();
 
-  // Bounded in-memory replay log — lets a reconnecting client rebuild the
-  // conversation instead of showing a blank screen. Also mirrored to disk
-  // (see appendHistoryFrame/loadHistoryFromDisk below) so a process restart
-  // — not just a teardown()+setup() bounce in the same process — still has
-  // something to replay; the in-memory array itself is what survives an
-  // in-process teardown()+setup() (same closure), same as before.
-  // Transient frames (typing) are never recorded — neither here nor on disk.
-  const HISTORY_LIMIT = 200;
-  const history: Record<string, unknown>[] = [];
+  // ---- Session registry (WU3) ----
+  //
+  // Every live conversation, keyed by session id (= threadId). Each one owns
+  // the bounded in-memory replay ring and monotonic seq counter this adapter
+  // used to keep globally — a reconnecting or switching client rebuilds ONE
+  // conversation from the matching ring instead of showing a blank screen.
+  // Mirrored to disk per session (see appendSessionFrame/readSessionFrames)
+  // so a process restart — not just a teardown()+setup() bounce in the same
+  // process — still has something to replay; the map itself is what survives
+  // an in-process bounce (same closure), same as `history` did before.
+  // Transient frames (typing, heartbeat) are never recorded — neither in a
+  // ring nor on disk.
+  const sessions = new Map<string, SessionState>();
 
-  // Disk mirror of `history`, one JSON line per emit()-recorded frame,
-  // append-only (plus periodic compaction — see below). Lives next to the
-  // token file under the same DATA_DIR. File BYTES for attachments are
-  // deliberately NOT persisted here (the `files` map below stays in-memory
-  // only) — a replayed `file` frame from before a restart 404s on download;
-  // AttachmentRow.tsx already treats that as "no longer available" (fetch
-  // failure / img onError), so nothing on the SPA side needs to change.
-  function historyFilePath(): string {
+  // The session each connection is LOOKING AT. Per-connection rather than
+  // global because "is this frame visible to you right now, or does it just
+  // dot your sidebar" is a property of the viewer, not of the server. With
+  // today's single-user reality there is usually exactly one entry; the
+  // WeakMap shape means a closed socket's entry disappears with the socket.
+  const clientSessions = new WeakMap<WebSocket, string>();
+
+  // The fallback session: what a brand-new connection starts on, where a
+  // `deliver()` with a null threadId lands (legacy/system messages that never
+  // went through a thread), and what an HTTP upload with no sessionId uses.
+  // Persisted in index.json so a restart reopens the conversation the
+  // operator was last in rather than an arbitrary one.
+  let activeSessionId = '';
+
+  // Bound on the in-memory ring, PER SESSION. Compaction kicks in once a
+  // session's file grows past 4x that — otherwise an append-only log outlives
+  // every eviction the ring already does and grows forever.
+  const HISTORY_LIMIT = 200;
+  const HISTORY_COMPACT_LIMIT = HISTORY_LIMIT * 4;
+
+  // Bootstrapped exactly once per adapter INSTANCE, at the true cold-start
+  // setup() — never on a teardown()+setup() bounce in the same process
+  // (SIGUSR2 in the harness, a network re-init), because at that point the
+  // session map already holds the live in-memory state and reloading from
+  // disk would duplicate every frame already in a ring.
+  let sessionsBootstrapped = false;
+
+  function historyDir(): string {
+    return path.join(dataDir, 'web-channel-history');
+  }
+
+  function sessionFilePath(id: string): string {
+    return path.join(historyDir(), `${id}.jsonl`);
+  }
+
+  function indexFilePath(): string {
+    return path.join(historyDir(), 'index.json');
+  }
+
+  /** Pre-WU3 layout: one file for the one conversation. Adopted once, on boot. */
+  function legacyHistoryFilePath(): string {
     return path.join(dataDir, 'web-channel-history.jsonl');
   }
 
-  // Compact once the on-disk file grows past this many lines — otherwise an
-  // append-only log outlives every eviction the in-memory ring already does
-  // and grows forever. 4x HISTORY_LIMIT is generous slack between compactions
-  // without letting the file balloon.
-  const HISTORY_COMPACT_LIMIT = HISTORY_LIMIT * 4;
-  let historyLinesOnDisk = 0;
-
-  // Loaded exactly once per adapter INSTANCE, at the true cold-start
-  // setup() — never on a teardown()+setup() bounce in the same process
-  // (SIGUSR2 in the harness, a network re-init), because at that point
-  // `history`/`frameSeq` already hold the live in-memory state and reloading
-  // from disk would duplicate every frame already in the ring.
-  let historyBootstrapped = false;
+  function newSessionId(): string {
+    return `ws-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+  }
 
   /**
-   * Cold-start only: read the jsonl file (if any), seed `history` with its
-   * tail (same HISTORY_LIMIT bound as the live ring) and restore `frameSeq`
-   * to the highest seq ever written — NOT just the highest seq in the
-   * retained tail, since a seq belonging to a since-evicted/compacted-away
-   * frame must still never be reissued. This is what keeps seq monotonic
-   * across a process restart: the client's replay merge (useNanoclaw.ts)
-   * relies on seq being a strictly increasing, never-repeating id, and a
-   * naive `frameSeq = 0` restart would immediately reissue seq 1 for a
-   * brand-new frame even though a client may already hold an old seq 1.
-   * Corrupt/unparseable lines are skipped with a warning; this must never
-   * throw — a bad history file is not a reason to fail setup().
+   * Read one session's jsonl. Returns its tail (same HISTORY_LIMIT bound as
+   * the live ring) plus the highest seq EVER written to it — not just the
+   * highest in the retained tail, since a seq belonging to a
+   * since-evicted/compacted-away frame must still never be reissued. That is
+   * what keeps seq monotonic across a process restart: the client's replay
+   * merge (useNanoclaw.ts) relies on seq being a strictly increasing,
+   * never-repeating id within a conversation, and a naive `frameSeq = 0`
+   * restart would immediately reissue seq 1 for a brand-new frame even though
+   * a client may already hold an old seq 1. Corrupt/unparseable lines are
+   * skipped with a warning; this must never throw — a bad history file is not
+   * a reason to fail setup().
    */
-  function loadHistoryFromDisk(): void {
+  function readSessionFrames(id: string): { frames: Record<string, unknown>[]; maxSeq: number; lines: number } {
     let raw: string;
     try {
-      raw = fs.readFileSync(historyFilePath(), 'utf8');
+      raw = fs.readFileSync(sessionFilePath(id), 'utf8');
     } catch {
-      return; // no history file yet (fresh install / fresh DATA_DIR) — nothing to load
+      return { frames: [], maxSeq: 0, lines: 0 }; // no file yet — nothing to load
     }
     const lines = raw.split('\n').filter((line) => line.trim().length > 0);
     const loaded: Record<string, unknown>[] = [];
@@ -577,50 +677,344 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       try {
         frame = JSON.parse(line);
       } catch (err) {
-        log.warn('Skipping corrupt web-channel-history.jsonl line (invalid JSON)', { err });
+        log.warn('Skipping corrupt web channel history line (invalid JSON)', { session: id, err });
         continue;
       }
       if (typeof frame !== 'object' || frame === null || typeof (frame as Record<string, unknown>).seq !== 'number') {
-        log.warn('Skipping malformed web-channel-history.jsonl line (missing numeric seq)');
+        log.warn('Skipping malformed web channel history line (missing numeric seq)', { session: id });
         continue;
       }
       const record = frame as Record<string, unknown>;
       loaded.push(record);
       if ((record.seq as number) > maxSeq) maxSeq = record.seq as number;
     }
-    const tail = loaded.slice(-HISTORY_LIMIT);
-    history.push(...tail);
-    frameSeq = maxSeq;
-    historyLinesOnDisk = lines.length;
-    log.info('Loaded web channel history from disk', {
-      linesOnDisk: historyLinesOnDisk,
-      replayed: tail.length,
-      resumedAtSeq: frameSeq,
+    return { frames: loaded.slice(-HISTORY_LIMIT), maxSeq, lines: lines.length };
+  }
+
+  /** Rewrite one session's file to hold exactly its current (bounded) ring. */
+  function compactSessionFile(session: SessionState): void {
+    try {
+      const body = session.history.map((frame) => JSON.stringify(frame)).join('\n');
+      fs.writeFileSync(sessionFilePath(session.meta.id), session.history.length > 0 ? body + '\n' : '');
+      session.linesOnDisk = session.history.length;
+    } catch (err) {
+      log.warn('Could not compact web channel session history (continuing uncompacted)', {
+        session: session.meta.id,
+        err,
+      });
+    }
+  }
+
+  /** Append one recorded frame to its session's file; synchronous so it survives a SIGTERM'd restart. */
+  function appendSessionFrame(session: SessionState, frame: Record<string, unknown>): void {
+    try {
+      fs.mkdirSync(historyDir(), { recursive: true });
+      fs.appendFileSync(sessionFilePath(session.meta.id), JSON.stringify(frame) + '\n');
+      session.linesOnDisk++;
+    } catch (err) {
+      log.warn('Could not persist web channel history frame (continuing in-memory only)', {
+        session: session.meta.id,
+        err,
+      });
+      return;
+    }
+    if (session.linesOnDisk > HISTORY_COMPACT_LIMIT) compactSessionFile(session);
+  }
+
+  /** Sidebar-shaped view of the registry, most recently active first. */
+  function sessionSummaries(): SessionMeta[] {
+    return [...sessions.values()].map((s) => ({ ...s.meta })).sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  }
+
+  /**
+   * Rewrite index.json. Best-effort like every other persistence path here: a
+   * failed write costs the titles/ordering of a restart, and the directory
+   * scan below can rebuild both, so it is never a reason to fail an operation.
+   */
+  function writeIndex(): void {
+    try {
+      fs.mkdirSync(historyDir(), { recursive: true });
+      fs.writeFileSync(
+        indexFilePath(),
+        JSON.stringify({ activeSession: activeSessionId, sessions: sessionSummaries() }, null, 2) + '\n',
+      );
+    } catch (err) {
+      log.warn('Could not persist web channel session index (continuing in-memory only)', { err });
+    }
+  }
+
+  /** Parse index.json, or null when it is missing, unreadable or not the shape we wrote. */
+  function readIndex(): { activeSession: string | null; sessions: SessionMeta[] } | null {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(indexFilePath(), 'utf8');
+    } catch {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null) return null;
+      const record = parsed as Record<string, unknown>;
+      if (!Array.isArray(record.sessions)) return null;
+      const metas: SessionMeta[] = [];
+      for (const entry of record.sessions) {
+        if (typeof entry !== 'object' || entry === null) continue;
+        const e = entry as Record<string, unknown>;
+        if (!isValidSessionId(e.id)) continue;
+        metas.push({
+          id: e.id,
+          title: typeof e.title === 'string' ? e.title : '',
+          createdAt: typeof e.createdAt === 'number' ? e.createdAt : Date.now(),
+          lastActiveAt: typeof e.lastActiveAt === 'number' ? e.lastActiveAt : Date.now(),
+        });
+      }
+      if (metas.length === 0) return null; // an index naming no usable session is no better than none
+      return { activeSession: isValidSessionId(record.activeSession) ? record.activeSession : null, sessions: metas };
+    } catch (err) {
+      log.warn('Web channel session index is corrupt — rebuilding it from the history directory', { err });
+      return null;
+    }
+  }
+
+  /**
+   * Rebuild the index by scanning the history directory. The jsonl files are
+   * the source of truth — index.json is a convenience cache of titles and
+   * ordering — so a corrupt/missing/truncated index costs metadata, never a
+   * conversation. Titles fall back to the session's first user message, the
+   * same rule that names a session live; timestamps fall back to the file's
+   * own mtime when its frames carry no `ts` (pre-timestamp frames).
+   */
+  function rebuildIndexFromDisk(): SessionMeta[] {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(historyDir());
+    } catch {
+      return [];
+    }
+    const metas: SessionMeta[] = [];
+    for (const entry of entries) {
+      if (!entry.endsWith('.jsonl')) continue; // skips index.json and archived `.jsonl.deleted` files
+      const id = entry.slice(0, -'.jsonl'.length);
+      if (!isValidSessionId(id)) {
+        log.warn('Ignoring a history file whose name is not a valid session id', { file: entry });
+        continue;
+      }
+      const { frames } = readSessionFrames(id);
+      let title = '';
+      for (const frame of frames) {
+        if (frame.type === 'message' && frame.role === 'user' && typeof frame.content === 'string') {
+          title = sessionTitleFrom(frame.content);
+          break;
+        }
+      }
+      let mtime = Date.now();
+      try {
+        mtime = fs.statSync(sessionFilePath(id)).mtimeMs;
+      } catch {
+        // best-effort — a file we just read should stat, but a missing stat is not fatal
+      }
+      const stamps = frames.map((f) => f.ts).filter((ts): ts is number => typeof ts === 'number');
+      metas.push({
+        id,
+        title,
+        createdAt: stamps.length > 0 ? Math.min(...stamps) : mtime,
+        lastActiveAt: stamps.length > 0 ? Math.max(...stamps) : mtime,
+      });
+    }
+    return metas;
+  }
+
+  /**
+   * Adopt a pre-WU3 `web-channel-history.jsonl` as the session `default`,
+   * exactly once: the rename is the idempotence: after it, the legacy path no
+   * longer exists, so a second boot takes the early return. A legacy file
+   * sitting next to an ALREADY adopted `default.jsonl` (someone restored an
+   * old backup, a half-finished manual migration) is left strictly alone
+   * rather than merged or clobbered — two histories cannot be interleaved
+   * without renumbering seqs, and renumbering is exactly what the seq
+   * guarantee forbids.
+   */
+  function adoptLegacyHistoryFile(): void {
+    if (!fs.existsSync(legacyHistoryFilePath())) return;
+    if (fs.existsSync(sessionFilePath(LEGACY_SESSION_ID))) {
+      log.warn('Legacy web-channel-history.jsonl found next to an already-adopted default session — leaving it alone', {
+        legacy: legacyHistoryFilePath(),
+      });
+      return;
+    }
+    try {
+      fs.mkdirSync(historyDir(), { recursive: true });
+      fs.renameSync(legacyHistoryFilePath(), sessionFilePath(LEGACY_SESSION_ID));
+      log.info('Adopted the pre-sessions web channel history as session "default"', {
+        file: sessionFilePath(LEGACY_SESSION_ID),
+      });
+    } catch (err) {
+      log.warn('Could not adopt the legacy web-channel-history.jsonl (starting a fresh session instead)', { err });
+    }
+  }
+
+  /** Register a session in memory, loading whatever its file already holds. */
+  function loadSession(meta: SessionMeta): SessionState {
+    const { frames, maxSeq, lines } = readSessionFrames(meta.id);
+    const state: SessionState = { meta, history: frames, frameSeq: maxSeq, linesOnDisk: lines };
+    sessions.set(meta.id, state);
+    return state;
+  }
+
+  /** Create a brand-new, empty session and register it. Never persists frames — the file appears with the first one. */
+  function createSession(id?: string): SessionState {
+    const now = Date.now();
+    const meta: SessionMeta = { id: id ?? newSessionId(), title: '', createdAt: now, lastActiveAt: now };
+    const state: SessionState = { meta, history: [], frameSeq: 0, linesOnDisk: 0 };
+    sessions.set(meta.id, state);
+    return state;
+  }
+
+  /**
+   * Cold-start only (see sessionsBootstrapped): adopt any legacy file, load
+   * the index (or rebuild it from the directory), and guarantee that exactly
+   * one session is active. There is ALWAYS at least one session after this
+   * runs — a fresh install gets an empty one — so nothing downstream has to
+   * handle "no conversation exists yet".
+   */
+  function bootstrapSessions(): void {
+    try {
+      fs.mkdirSync(historyDir(), { recursive: true });
+    } catch (err) {
+      log.warn('Could not create the web channel history directory (continuing in-memory only)', { err });
+    }
+    adoptLegacyHistoryFile();
+
+    const index = readIndex();
+    let metas = index?.sessions ?? [];
+    let rebuilt = false;
+    if (metas.length === 0) {
+      metas = rebuildIndexFromDisk();
+      rebuilt = metas.length > 0;
+    } else {
+      // The index names the sessions, but a file that exists on disk and is
+      // missing from the index (a torn index write, a manually dropped file)
+      // must still come back — the files are the source of truth.
+      const known = new Set(metas.map((m) => m.id));
+      for (const meta of rebuildIndexFromDisk()) {
+        if (!known.has(meta.id)) {
+          metas.push(meta);
+          rebuilt = true;
+        }
+      }
+    }
+
+    for (const meta of metas) loadSession(meta);
+
+    if (sessions.size === 0) {
+      const fresh = createSession();
+      activeSessionId = fresh.meta.id;
+    } else {
+      const preferred = index?.activeSession;
+      activeSessionId =
+        preferred && sessions.has(preferred) ? preferred : (sessionSummaries()[0]?.id ?? createSession().meta.id);
+    }
+    writeIndex();
+    log.info('Loaded web channel sessions from disk', {
+      sessions: sessions.size,
+      active: activeSessionId,
+      rebuiltIndex: rebuilt,
+      frames: [...sessions.values()].reduce((n, s) => n + s.history.length, 0),
     });
   }
 
-  /** Rewrite the file to hold exactly the current (bounded) in-memory ring. */
-  function compactHistoryFile(): void {
+  /** The active session's state, creating one if the registry somehow emptied. */
+  function activeSession(): SessionState {
+    const current = sessions.get(activeSessionId);
+    if (current) return current;
+    const fresh = createSession();
+    activeSessionId = fresh.meta.id;
+    writeIndex();
+    return fresh;
+  }
+
+  /**
+   * The session for an id we did not create ourselves — a `deliver()`
+   * threadId, mostly. An id we know is returned as-is; an unknown but
+   * well-formed one is (re)created rather than folded into the active
+   * conversation, because dropping a reply into the WRONG conversation is the
+   * exact failure sessions exist to prevent (an id can be unknown because the
+   * operator deleted the conversation while a turn was still in flight).
+   */
+  function ensureSession(id: string): SessionState {
+    const existing = sessions.get(id);
+    if (existing) return existing;
+    log.warn('Delivery for an unknown web channel session — recreating it', { session: id });
+    const created = createSession(id);
+    writeIndex();
+    broadcastSessions();
+    return created;
+  }
+
+  function touchSession(session: SessionState, ts: number): void {
+    session.meta.lastActiveAt = ts;
+    writeIndex();
+  }
+
+  /**
+   * Name a session after its first user message, openwebui-style. Only the
+   * first one ever counts: a title that changed with every message would make
+   * the sidebar unreadable, and renaming is deliberately out of WU3.
+   */
+  function maybeSetTitle(session: SessionState, text: string): void {
+    if (session.meta.title) return;
+    const title = sessionTitleFrom(text);
+    if (!title) return;
+    session.meta.title = title;
+    writeIndex();
+    broadcastSessions();
+  }
+
+  /** Archive a session's frames instead of erasing them (delete = archive, per the WU3 design). */
+  function archiveSessionFile(id: string): void {
+    const from = sessionFilePath(id);
+    if (!fs.existsSync(from)) return;
+    let to = `${from}.deleted`;
+    if (fs.existsSync(to)) to = `${from}.${Date.now()}.deleted`; // never clobber an earlier archive
     try {
-      const body = history.map((frame) => JSON.stringify(frame)).join('\n');
-      fs.writeFileSync(historyFilePath(), history.length > 0 ? body + '\n' : '');
-      historyLinesOnDisk = history.length;
+      fs.renameSync(from, to);
+      log.info('Archived a deleted web channel session', { session: id, archive: to });
     } catch (err) {
-      log.warn('Could not compact web-channel-history.jsonl (continuing uncompacted)', { err });
+      log.warn('Could not archive the deleted session history (leaving it in place)', { session: id, err });
     }
   }
 
-  /** Append one recorded frame to disk; synchronous so it survives a SIGTERM'd restart. */
-  function appendHistoryFrame(frame: Record<string, unknown>): void {
+  /** The session a connection is currently viewing (its own, else the global active one). */
+  function viewOf(ws: WebSocket): string {
+    const view = clientSessions.get(ws);
+    if (view && sessions.has(view)) return view;
+    return activeSession().meta.id;
+  }
+
+  /**
+   * Point a connection at a session and make it the fallback for everything
+   * that has no connection of its own (an upload, a null-threadId deliver).
+   * Single-user demo semantics: the last switch anywhere wins.
+   */
+  function setView(ws: WebSocket, id: string): void {
+    clientSessions.set(ws, id);
+    activeSessionId = id;
+    writeIndex();
+  }
+
+  /** Broadcast the session list to every client. Not a recorded frame: pure UI state, no seq, never replayed. */
+  function broadcastSessions(): void {
+    broadcast({ type: 'sessions', sessions: sessionSummaries() });
+  }
+
+  /** Replay one session's ring to one client. Carries `sessionId` so the client knows which conversation it just received. */
+  function sendHistory(ws: WebSocket, session: SessionState): void {
+    if (ws.readyState !== ws.OPEN) return;
     try {
-      fs.mkdirSync(dataDir, { recursive: true });
-      fs.appendFileSync(historyFilePath(), JSON.stringify(frame) + '\n');
-      historyLinesOnDisk++;
+      ws.send(JSON.stringify({ type: 'history', sessionId: session.meta.id, frames: session.history }));
     } catch (err) {
-      log.warn('Could not persist web-channel-history frame (continuing in-memory only)', { err });
-      return;
+      log.warn('Failed to send a history replay to a client', { err });
     }
-    if (historyLinesOnDisk > HISTORY_COMPACT_LIMIT) compactHistoryFile();
   }
 
   // P2a outbound attachments: id -> bytes. `files` is a Map so insertion
@@ -697,19 +1091,22 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     broadcast({ type: 'typing', on });
   }
 
-  // Monotonic sequence stamped on every RECORDED frame (see emit() below) —
-  // separate from the id counter above, which also numbers frames that never
-  // go through emit() (e.g. card_resolved shares nextId's messageId space
-  // indirectly via renderStore, not directly). The client uses this to merge
-  // a replayed history snapshot with whatever it already applied live
-  // instead of blindly overwriting: reconnect (subscribe, i.e. clients.add())
-  // happens before the snapshot is read below, so no frame recorded from
-  // this point on can be missed by broadcast — but the reverse isn't free:
-  // nothing stops a client from applying a live frame and THEN receiving a
-  // history snapshot that predates it (a slower snapshot build, a future
-  // change that adds an await here, a retried/duplicated send). seq is the
-  // client's defense against that: idempotent, order-tolerant replay.
-  let frameSeq = 0;
+  // Monotonic sequence stamped on every RECORDED frame (see emit() below),
+  // counted PER SESSION (SessionState.frameSeq) — separate from the id
+  // counter above, which also numbers frames that never go through emit()
+  // (e.g. card_resolved shares nextId's messageId space indirectly via
+  // renderStore, not directly). The client uses seq to merge a replayed
+  // history snapshot with whatever it already applied live instead of
+  // blindly overwriting: reconnect (subscribe, i.e. clients.add()) happens
+  // before the snapshot is read below, so no frame recorded from this point
+  // on can be missed by broadcast — but the reverse isn't free: nothing
+  // stops a client from applying a live frame and THEN receiving a history
+  // snapshot that predates it (a slower snapshot build, a future change that
+  // adds an await here, a retried/duplicated send). seq is the client's
+  // defense against that: idempotent, order-tolerant replay. Per-session
+  // rather than global because the client only ever holds ONE conversation's
+  // frames at a time, and a per-session counter keeps each conversation's
+  // numbering independent of how busy its neighbors were.
 
   function broadcast(frame: Record<string, unknown>): void {
     const data = JSON.stringify(frame);
@@ -725,13 +1122,40 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   }
 
   /**
-   * Record a frame into the replay history AND broadcast it — in that order,
-   * unconditionally, regardless of whether any client is currently connected.
-   * This is what makes deliver() safe to call with zero clients: the answer
-   * still lands in `history` for whoever reconnects later, even though
-   * broadcast() has nobody to send it to right now. Every recorded frame
-   * gets a monotonically increasing `seq` first, so a client that replays
-   * `history` can tell exactly which live frames it already has.
+   * Send one recorded frame to whoever should see it: clients VIEWING that
+   * session get the frame itself, everyone else gets a lightweight
+   * `session_activity` marker so their sidebar can dot the conversation
+   * without pulling frames for a chat nobody is reading. "Viewing" is
+   * per-connection (viewOf) — the honest definition for today's single-user
+   * reality, and the one multi-user work will keep.
+   */
+  function routeFrame(session: SessionState, frame: Record<string, unknown>): void {
+    const data = JSON.stringify(frame);
+    const activity = JSON.stringify({
+      type: 'session_activity',
+      sessionId: session.meta.id,
+      lastActiveAt: session.meta.lastActiveAt,
+    });
+    for (const ws of clients) {
+      if (ws.readyState !== ws.OPEN) continue;
+      try {
+        ws.send(viewOf(ws) === session.meta.id ? data : activity);
+      } catch (err) {
+        log.warn('Failed to send frame to a client', { err });
+      }
+    }
+  }
+
+  /**
+   * Record a frame into one session's replay history AND route it — in that
+   * order, unconditionally, regardless of whether any client is currently
+   * connected. This is what makes deliver() safe to call with zero clients:
+   * the answer still lands in the session's ring for whoever reconnects
+   * later, even though routeFrame() has nobody to send it to right now. Every
+   * recorded frame gets a monotonically increasing per-session `seq` first,
+   * so a client that replays that session's history can tell exactly which
+   * live frames it already has, plus the `sessionId` it belongs to so a
+   * client can never fold a frame into the wrong conversation.
    *
    * Also stamps a wall-clock `ts` (epoch ms) alongside `seq` — the message-
    * timestamp feature. Stamped once, here, at the moment the frame is first
@@ -742,15 +1166,18 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
    * frame" / ts: "when, in wall-clock terms, for display") and deliberately
    * don't derive one from the other.
    */
-  function emit(frame: Record<string, unknown>): void {
-    frame.seq = ++frameSeq;
+  function emit(sessionId: string, frame: Record<string, unknown>): void {
+    const session = ensureSession(sessionId);
+    frame.seq = ++session.frameSeq;
     frame.ts = Date.now();
-    history.push(frame);
-    if (history.length > HISTORY_LIMIT) history.shift();
+    frame.sessionId = session.meta.id;
+    session.history.push(frame);
+    if (session.history.length > HISTORY_LIMIT) session.history.shift();
     // Persist before broadcasting: a crash between the two would rather lose
     // a live delivery than lose durability of one that already went out.
-    appendHistoryFrame(frame);
-    broadcast(frame);
+    appendSessionFrame(session, frame);
+    touchSession(session, frame.ts as number);
+    routeFrame(session, frame);
   }
 
   /**
@@ -766,7 +1193,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
    * pipeline (session-manager.ts) treats a web upload exactly like a
    * downloaded chat-sdk attachment, no new host-side shape to support.
    */
-  async function handleUpload(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  async function handleUpload(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     try {
       const contentLengthHeader = req.headers['content-length'];
       if (contentLengthHeader && Number(contentLengthHeader) > MAX_UPLOAD_BODY_BYTES) {
@@ -794,6 +1221,17 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
 
       const text = textPart ? textPart.data.toString('utf8').trim() : '';
 
+      // Which conversation this upload belongs to. The SPA appends
+      // `?sessionId=` (same query-string convention as `?token=`); an
+      // upload without one — an older client, a curl probe — lands in the
+      // active session, the same fallback a WS `user_message` without a
+      // sessionId gets. An unknown-but-well-formed id is (re)created rather
+      // than silently redirected, mirroring ensureSession()'s stance.
+      const requestedSession = url.searchParams.get('sessionId');
+      const session = isValidSessionId(requestedSession) ? ensureSession(requestedSession) : activeSession();
+      const sessionId = session.meta.id;
+      if (text) maybeSetTitle(session, text);
+
       // The user's own text, rendered as a normal user message bubble — same
       // frame shape and history treatment as a plain WS user_message (see
       // handleClientFrame below), just triggered from the HTTP upload path
@@ -801,7 +1239,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       // caption reads above its attachment (comment mirrors the WS path's
       // "record the operator's own message" note).
       if (text) {
-        emit({ type: 'message', id: nextId('user'), role: 'user', content: text });
+        emit(sessionId, { type: 'message', id: nextId('user'), role: 'user', content: text });
       }
 
       const registeredFiles: RegisteredFile[] = [];
@@ -815,7 +1253,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         // the other side by AttachmentRow.tsx. This is why files-IN needed no
         // new frame type, and so no new case in the SPA's onmessage switch /
         // reducer / SeqFrame exclusion list — only a field on the existing one.
-        emit({
+        emit(sessionId, {
           type: 'file',
           id: registered.id,
           name: registered.filename,
@@ -853,7 +1291,9 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       if (text) content.text = text;
 
       void Promise.resolve(
-        currentConfig.onInbound(PLATFORM_ID, null, {
+        // threadId = the session id: this is what buys a distinct host agent
+        // session per UI conversation (see the file header).
+        currentConfig.onInbound(PLATFORM_ID, sessionId, {
           id: nextId('web'),
           kind: 'chat',
           timestamp: new Date().toISOString(),
@@ -949,7 +1389,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         res.end(JSON.stringify({ error: 'method not allowed' }));
         return;
       }
-      void handleUpload(req, res);
+      void handleUpload(req, res, url);
       return;
     }
 
@@ -999,12 +1439,67 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
     });
   }
 
-  function handleClientFrame(raw: string, config: ChannelSetup): void {
+  function handleClientFrame(raw: string, config: ChannelSetup, ws: WebSocket): void {
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(raw);
     } catch {
       log.warn('Ignoring non-JSON frame from client');
+      return;
+    }
+
+    // ---- Session ops (WU3) ----
+    //
+    // Switching is server-authoritative: the client asks, the server answers
+    // with that session's history replay (which carries its `sessionId`), and
+    // the client adopts the conversation the replay names. That keeps a
+    // client from ever showing a conversation the server did not hand it.
+    if (msg.type === 'create_session') {
+      const session = createSession();
+      setView(ws, session.meta.id);
+      broadcastSessions();
+      sendHistory(ws, session); // empty, but it is what tells this client which session it is now on
+      log.info('Web client created a session', { session: session.meta.id, sessions: sessions.size });
+      return;
+    }
+
+    if (msg.type === 'switch_session') {
+      if (!isValidSessionId(msg.id) || !sessions.has(msg.id)) {
+        // Unknown/malformed id: resync the client's list rather than
+        // silently doing nothing, so a stale sidebar corrects itself.
+        log.warn('Ignoring switch_session for an unknown session', { requested: msg.id });
+        broadcastSessions();
+        return;
+      }
+      setView(ws, msg.id);
+      sendHistory(ws, sessions.get(msg.id)!);
+      return;
+    }
+
+    if (msg.type === 'delete_session') {
+      if (!isValidSessionId(msg.id) || !sessions.has(msg.id)) {
+        broadcastSessions();
+        return;
+      }
+      const removed = msg.id;
+      sessions.delete(removed);
+      archiveSessionFile(removed);
+      // There is ALWAYS an active session: deleting the last one immediately
+      // opens a fresh empty conversation rather than leaving the UI with
+      // nothing to show and nowhere for a reply to land.
+      if (sessions.size === 0) createSession();
+      if (activeSessionId === removed) activeSessionId = sessionSummaries()[0].id;
+      writeIndex();
+      broadcastSessions();
+      // Anyone who was looking at the deleted conversation gets moved onto a
+      // real one, with its replay, instead of staring at a dead list entry.
+      for (const client of clients) {
+        if (clientSessions.get(client) === removed) {
+          clientSessions.set(client, activeSessionId);
+          sendHistory(client, activeSession());
+        }
+      }
+      log.info('Web client deleted a session', { session: removed, sessions: sessions.size });
       return;
     }
 
@@ -1019,10 +1514,23 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       // Falls back to a server-generated id for older/other clients that
       // don't send one — never breaks the wire contract.
       const clientId = typeof msg.clientId === 'string' && msg.clientId.length > 0 ? msg.clientId : undefined;
-      emit({ type: 'message', id: clientId ?? nextId('user'), role: 'user', content: msg.text });
+      // `sessionId` is optional on the wire: absent means "the session this
+      // connection is viewing", which is what keeps every pre-WU3 probe
+      // script (and any client that never learned about sessions) working
+      // unchanged against a sessions-aware server.
+      const session =
+        isValidSessionId(msg.sessionId) && sessions.has(msg.sessionId)
+          ? sessions.get(msg.sessionId)!
+          : sessions.get(viewOf(ws))!;
+      const sessionId = session.meta.id;
+      maybeSetTitle(session, msg.text);
+      emit(sessionId, { type: 'message', id: clientId ?? nextId('user'), role: 'user', content: msg.text });
 
       void Promise.resolve(
-        config.onInbound(PLATFORM_ID, null, {
+        // threadId = the session id. The host keys its agent sessions on
+        // (messaging_group_id, thread_id), so this is the whole mechanism by
+        // which one sidebar conversation becomes one agent session.
+        config.onInbound(PLATFORM_ID, sessionId, {
           id: nextId('web'),
           kind: 'chat',
           timestamp: new Date().toISOString(),
@@ -1051,8 +1559,14 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       const selectedIndex = /^\d+$/.test(tail) ? Number(tail) : -1;
 
       // Edit the card in place to its terminal chosen state (removes buttons),
-      // then dispatch onAction — mirroring the bridge's order.
-      emit({ type: 'card_resolved', questionId, selectedIndex, selectedLabel, actor: 'you' });
+      // then dispatch onAction — mirroring the bridge's order. The resolution
+      // lands in the card's OWN session (renderStore), not the clicking
+      // connection's current view: the two differ the moment someone switches
+      // conversations with a card still open. `onAction` itself carries no
+      // thread parameter in the ChannelSetup contract (adapter.ts), so the
+      // host resolves the question by questionId — nothing to thread through.
+      const cardSession = render?.sessionId ?? viewOf(ws);
+      emit(cardSession, { type: 'card_resolved', questionId, selectedIndex, selectedLabel, actor: 'you' });
       renderStore.delete(questionId);
 
       try {
@@ -1067,20 +1581,25 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
   const adapter: ChannelAdapter = {
     name: 'web',
     channelType: CHANNEL_TYPE,
-    supportsThreads: false,
+    // WU3: one sidebar conversation is one thread. The router pre-strips
+    // thread ids from adapters that declare this false (src/router.ts), which
+    // would collapse every conversation back onto one agent session, so this
+    // flag is load-bearing — not cosmetic.
+    supportsThreads: true,
     defaults: WEB_DEFAULTS,
 
     async setup(config: ChannelSetup): Promise<void> {
       currentConfig = config;
 
-      // Cold-start only (see loadHistoryFromDisk's doc comment): restores
-      // `history` + `frameSeq` from the jsonl mirror so a process restart
-      // (not just a teardown()+setup() bounce) still has something to
-      // replay, and so newly emitted frames keep counting up from where the
-      // previous process left off instead of colliding with old seqs.
-      if (!historyBootstrapped) {
-        historyBootstrapped = true;
-        loadHistoryFromDisk();
+      // Cold-start only (see bootstrapSessions' doc comment): restores every
+      // session's ring + seq counter from the jsonl mirrors so a process
+      // restart (not just a teardown()+setup() bounce) still has
+      // conversations to replay, and so newly emitted frames keep counting up
+      // from where the previous process left off instead of colliding with
+      // old seqs.
+      if (!sessionsBootstrapped) {
+        sessionsBootstrapped = true;
+        bootstrapSessions();
       }
 
       // P2b: resolve the bundle fingerprint once per setup(), from whatever
@@ -1144,11 +1663,15 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
             'Web client connected',
             auth.userId ? { clients: clients.size, userId: auth.userId } : { clients: clients.size },
           );
-          // Replay everything we remember BEFORE 'ready', so the SPA rebuilds
-          // its conversation before it flips to the connected state — this is
-          // what makes a reconnect (dropped socket, or the whole ws layer
-          // bouncing) look seamless instead of blank.
-          ws.send(JSON.stringify({ type: 'history', frames: history }));
+          // Replay everything we remember about the ACTIVE conversation
+          // BEFORE 'ready', so the SPA rebuilds it before it flips to the
+          // connected state — this is what makes a reconnect (dropped socket,
+          // or the whole ws layer bouncing) look seamless instead of blank.
+          // Only the active session's frames: the sidebar needs metadata, not
+          // every conversation's backlog, and a switch fetches the rest.
+          const opened = activeSession();
+          clientSessions.set(ws, opened.meta.id);
+          sendHistory(ws, opened);
           // Carry the CURRENT typing state so a (re)connecting client starts
           // truthful instead of stuck on whatever `typing` value it had
           // before the drop — typing frames are transient and never land in
@@ -1163,15 +1686,25 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           // verified identity (Tailscale header path), omitted entirely for a
           // token-authenticated client, so the SPA can treat "field present"
           // as "there is a login to show" with no falsy special cases.
-          const readyFrame: Record<string, unknown> = { type: 'ready', threadId: null, typing: typingState };
+          // WU3: `sessions` + `activeSession` are the sidebar's initial state,
+          // and `threadId` — historically always null — now names the thread
+          // this connection is actually on, which is the session it opened.
+          const readyFrame: Record<string, unknown> = {
+            type: 'ready',
+            threadId: opened.meta.id,
+            typing: typingState,
+            sessions: sessionSummaries(),
+            activeSession: opened.meta.id,
+          };
           if (currentBundle) readyFrame.bundle = currentBundle;
           if (auth.userId) readyFrame.userId = auth.userId;
           ws.send(JSON.stringify(readyFrame));
-          ws.on('message', (data) => handleClientFrame(data.toString('utf8'), config));
+          ws.on('message', (data) => handleClientFrame(data.toString('utf8'), config, ws));
           ws.on('close', () => {
             const userId = clientUserIds.get(ws);
             clients.delete(ws);
             clientUserIds.delete(ws);
+            clientSessions.delete(ws);
             log.info('Web client disconnected', userId ? { clients: clients.size, userId } : { clients: clients.size });
           });
           ws.on('error', (err) => log.warn('Web client socket error', { err }));
@@ -1246,9 +1779,29 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       return server !== null;
     },
 
-    async deliver(platformId, _threadId, message: OutboundMessage): Promise<string | undefined> {
+    async deliver(platformId, threadId, message: OutboundMessage): Promise<string | undefined> {
       if (platformId !== PLATFORM_ID) return undefined;
       const content = (message.content ?? {}) as Record<string, unknown>;
+
+      // WU3 routing: the threadId this delivery came back on IS the UI
+      // conversation it belongs to (the same id onInbound handed the host).
+      // Three cases, all deliberate:
+      //  - a known session      -> the frame lands in that conversation
+      //  - an unknown, well-formed id -> ensureSession recreates it rather
+      //    than dropping the reply into whatever chat happens to be open
+      //  - null (a legacy/system delivery that never rode a thread, or a
+      //    wiring whose thread policy stripped the id) -> the active session,
+      //    recorded there like any other frame. This is the ONE case where a
+      //    reply can land in a conversation other than the one that asked,
+      //    and it only happens when the host tells us nothing about which.
+      const sid = (() => {
+        if (threadId === null || threadId === undefined) return activeSession().meta.id;
+        if (!isValidSessionId(threadId)) {
+          log.warn('Delivery for a malformed threadId — falling back to the active session', { threadId });
+          return activeSession().meta.id;
+        }
+        return ensureSession(threadId).meta.id;
+      })();
 
       // P2a outbound attachments. `files` is orthogonal to `content` (an
       // edit/card/message can in principle carry files too), so this runs
@@ -1265,7 +1818,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
           if (registered) {
             setTypingState(false); // a delivered file is a real deliverable, same as a real message
             deliveredMessageIds.add(registered.id);
-            emit({
+            emit(sid, {
               type: 'file',
               id: registered.id,
               name: registered.filename,
@@ -1279,7 +1832,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
             const label = file?.filename || '(unnamed file)';
             const messageId = nextId('msg');
             deliveredMessageIds.add(messageId);
-            emit({
+            emit(sid, {
               type: 'message',
               id: messageId,
               role: 'assistant',
@@ -1301,7 +1854,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         if (!deliveredMessageIds.has(messageId)) {
           log.warn('Editing a message id this adapter never delivered — forwarding anyway', { messageId });
         }
-        emit({ type: 'edit', id: messageId, content: text });
+        emit(sid, { type: 'edit', id: messageId, content: text });
         return undefined;
       }
 
@@ -1317,8 +1870,8 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
         const options = normalizeOptions(content.options as never);
         const messageId = nextId('card');
         deliveredMessageIds.add(messageId);
-        renderStore.set(questionId, { title, options, messageId });
-        emit({
+        renderStore.set(questionId, { title, options, messageId, sessionId: sid });
+        emit(sid, {
           type: 'card',
           id: messageId,
           questionId,
@@ -1389,7 +1942,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
             // bridge, which drops here unconditionally).
             const messageId = nextId('msg');
             deliveredMessageIds.add(messageId);
-            emit({ type: 'message', id: messageId, role: 'assistant', content: fallbackText });
+            emit(sid, { type: 'message', id: messageId, role: 'assistant', content: fallbackText });
             return messageId;
           }
           log.warn('send_card payload empty, skipping delivery');
@@ -1398,7 +1951,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
 
         const messageId = nextId('gcard');
         deliveredMessageIds.add(messageId);
-        emit({ type: 'generic_card', id: messageId, title, body, links, fallbackText });
+        emit(sid, { type: 'generic_card', id: messageId, title, body, links, fallbackText });
         return messageId;
       }
 
@@ -1411,7 +1964,7 @@ export function createWebAdapter(options: WebChannelOptions = {}): ChannelAdapte
       if (text) {
         const messageId = nextId('msg');
         deliveredMessageIds.add(messageId);
-        emit({ type: 'message', id: messageId, role: 'assistant', content: text });
+        emit(sid, { type: 'message', id: messageId, role: 'assistant', content: text });
         return messageId;
       }
       // No text/card/edit content — if this delivery was files-only, hand

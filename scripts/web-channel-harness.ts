@@ -9,6 +9,14 @@
  * A real browser (Playwright) then clicks a button; the resulting onAction
  * call is what proves the round-trip.
  *
+ * Threads/sessions (WU3): every reply goes back out on the SAME `threadId`
+ * the inbound arrived on, which is what the real host does — it keys agent
+ * sessions on (messaging_group_id, thread_id) and replies into the
+ * originating thread. That is what lets a proof drive several conversations
+ * at once and assert each answer landed in the one that asked. The
+ * `echo <text>` scenario exists for exactly that: a reply whose text says
+ * which turn produced it.
+ *
  * Run:  NANOCLAW_WEB_TOKEN=<tok> tsx scripts/web-channel-harness.ts [eventLogPath]
  *
  * Env:
@@ -100,10 +108,21 @@ const setup: ChannelSetup = {
 
     const text = inboundText(message);
 
+    // Multi-session scenario: reply with the same text back, on the same
+    // thread. A proof driving two conversations at once can then assert that
+    // "echo A" answered in conversation A and nowhere else — the whole point
+    // of routing deliver() by threadId.
+    if (text.startsWith('echo ')) {
+      const payload = text.slice('echo '.length);
+      await deliver(PLATFORM_ID, threadId, { kind: 'chat-sdk', content: { markdown: `echo: ${payload}` } });
+      record('echoDelivered', { threadId, payload });
+      return;
+    }
+
     // Phase-1 parity scenarios (generic card rendering) — everything else
     // falls through to the original markdown + approval card demo below.
     if (text === 'show generic card') {
-      await deliver(PLATFORM_ID, null, {
+      await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: {
           type: 'card',
@@ -126,7 +145,7 @@ const setup: ChannelSetup = {
     if (text === 'show fallback card') {
       // No title/description/children/actions — only a fallbackText. Proves
       // the adapter never silently drops an unrenderable send_card payload.
-      await deliver(PLATFORM_ID, null, {
+      await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: { type: 'card', card: {}, fallbackText: 'Fallback-only card: nothing structured to render.' },
       });
@@ -139,13 +158,13 @@ const setup: ChannelSetup = {
       // expiring (onecli-approvals.ts editCardExpired: deliver() an
       // operation:'edit' against the messageId the earlier deliver() call
       // returned).
-      const messageId = await deliver(PLATFORM_ID, null, {
+      const messageId = await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: { markdown: 'Original message — about to be edited.' },
       });
       record('editTargetDelivered', { messageId });
       await new Promise((r) => setTimeout(r, 300));
-      await deliver(PLATFORM_ID, null, {
+      await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: { operation: 'edit', messageId, text: 'Edited in place — the original text is gone.' },
       });
@@ -156,7 +175,7 @@ const setup: ChannelSetup = {
     if (text === 'edit unknown') {
       // Edit targeting an id the adapter never delivered — the SPA must
       // append it rather than drop it.
-      await deliver(PLATFORM_ID, null, {
+      await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: { operation: 'edit', messageId: 'never-delivered-id', text: 'Edit for an id nobody has seen.' },
       });
@@ -172,13 +191,13 @@ const setup: ChannelSetup = {
       // racing it against the SPA's own reconnect backoff. Send SIGUSR1 to
       // this process to release the hold; the turn then completes normally
       // (typing:false + a recorded markdown message).
-      await setTyping(PLATFORM_ID, null);
+      await setTyping(PLATFORM_ID, threadId);
       record('ghostTypingStarted', {});
       await new Promise<void>((resolve) => {
         resolveGhostTypingRelease = resolve;
       });
       record('ghostTypingReleased', {});
-      await deliver(PLATFORM_ID, null, {
+      await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: { markdown: 'ghost typing test — turn completed after the release signal.' },
       });
@@ -191,7 +210,7 @@ const setup: ChannelSetup = {
       // A single image attachment, no accompanying text — the exact "model
       // sent code as a file, user saw nothing" incident shape, minus the
       // silent drop.
-      const messageId = await deliver(PLATFORM_ID, null, {
+      const messageId = await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: {},
         files: [{ filename: 'demo.png', data: DEMO_PNG }],
@@ -202,7 +221,7 @@ const setup: ChannelSetup = {
 
     if (text === 'send doc file') {
       // Non-image attachment — SPA renders a download card, not a thumbnail.
-      const messageId = await deliver(PLATFORM_ID, null, {
+      const messageId = await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: {},
         files: [{ filename: 'notes.txt', data: DEMO_DOC }],
@@ -212,7 +231,7 @@ const setup: ChannelSetup = {
     }
 
     if (text === 'send markdown file') {
-      const messageId = await deliver(PLATFORM_ID, null, {
+      const messageId = await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: {},
         files: [{ filename: 'README.md', data: DEMO_MARKDOWN }],
@@ -222,7 +241,7 @@ const setup: ChannelSetup = {
     }
 
     if (text === 'send code file') {
-      const messageId = await deliver(PLATFORM_ID, null, {
+      const messageId = await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: {},
         files: [{ filename: 'greet.py', data: DEMO_CODE }],
@@ -235,7 +254,7 @@ const setup: ChannelSetup = {
       // Just over INLINE_MAX_BYTES (1MB) — must render as a plain download
       // card with NO inline-view toggle at all, regardless of its .txt
       // extension (which would otherwise be inline-eligible).
-      const messageId = await deliver(PLATFORM_ID, null, {
+      const messageId = await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: {},
         files: [{ filename: 'huge-log.txt', data: DEMO_BIG_FILE }],
@@ -247,7 +266,7 @@ const setup: ChannelSetup = {
     if (text === 'send bad file') {
       // Zero-length data — registerFile() rejects it; never-drop must
       // surface a plain visible message instead of silently eating it.
-      await deliver(PLATFORM_ID, null, {
+      await deliver(PLATFORM_ID, threadId, {
         kind: 'chat-sdk',
         content: {},
         files: [{ filename: 'empty.bin', data: Buffer.alloc(0) }],
@@ -263,13 +282,13 @@ const setup: ChannelSetup = {
       // to stop collecting `file` frames.
       const FLOOD_COUNT = 55;
       for (let i = 0; i < FLOOD_COUNT; i++) {
-        await deliver(PLATFORM_ID, null, {
+        await deliver(PLATFORM_ID, threadId, {
           kind: 'chat-sdk',
           content: {},
           files: [{ filename: `flood-${i}.bin`, data: Buffer.from(`flood file #${i}`) }],
         });
       }
-      await deliver(PLATFORM_ID, null, { kind: 'chat-sdk', content: { markdown: 'flood done' } });
+      await deliver(PLATFORM_ID, threadId, { kind: 'chat-sdk', content: { markdown: 'flood done' } });
       record('floodFilesDelivered', { count: FLOOD_COUNT });
       return;
     }
@@ -280,7 +299,7 @@ const setup: ChannelSetup = {
     // to land reliably mid-turn (see browser-proof-refresh-mid-turn.mjs).
     const typingDelayMs = Number(process.env.HARNESS_TYPING_DELAY_MS ?? 350);
     const cardDelayMs = Number(process.env.HARNESS_CARD_DELAY_MS ?? 150);
-    await setTyping(PLATFORM_ID, null);
+    await setTyping(PLATFORM_ID, threadId);
     await new Promise((r) => setTimeout(r, typingDelayMs));
 
     const markdown = [
@@ -299,13 +318,13 @@ const setup: ChannelSetup = {
       '',
       'Sound good?',
     ].join('\n');
-    await deliver(PLATFORM_ID, null, { kind: 'chat-sdk', content: { markdown } });
+    await deliver(PLATFORM_ID, threadId, { kind: 'chat-sdk', content: { markdown } });
 
     await new Promise((r) => setTimeout(r, cardDelayMs));
 
     // The exact payload core delivers (primitive.ts requestApproval()).
     const questionId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    await deliver(PLATFORM_ID, null, {
+    await deliver(PLATFORM_ID, threadId, {
       kind: 'chat-sdk',
       content: {
         type: 'ask_question',
