@@ -21,8 +21,23 @@ export interface CardResolution {
 
 // ---- Server -> client frames ----
 
+/**
+ * One conversation in the sidebar (WU3). `id` is also the `threadId` the
+ * adapter passes the host, so a UI conversation and a host agent session are
+ * the same thing. `title` is the session's first user message, truncated
+ * server-side; empty until that message exists, which the sidebar renders as
+ * "New chat" rather than inventing a placeholder server-side.
+ */
+export interface SessionSummary {
+  id: string;
+  title: string;
+  createdAt: number;
+  lastActiveAt: number;
+}
+
 export interface ReadyFrame {
   type: 'ready';
+  /** WU3: the session this connection opened on. Was always null before sessions existed. */
   threadId: string | null;
   /**
    * Current server-side typing state at connect time. Typing frames are
@@ -48,6 +63,38 @@ export interface ReadyFrame {
    * "no identity to show", never an empty string.
    */
   userId?: string;
+  /**
+   * WU3 sessions: every conversation this adapter knows about, most recently
+   * active first, plus which one this connection opened on. Absent on a
+   * server that predates sessions — the SPA then runs with an empty sidebar
+   * and its single implicit conversation, exactly as it did before.
+   */
+  sessions?: SessionSummary[];
+  activeSession?: string;
+}
+
+/**
+ * The session list changed (created, deleted, retitled). Pure UI state: no
+ * `seq`, never recorded, never replayed — the server sends a fresh full list
+ * rather than a delta, because the list is small and a delta protocol is one
+ * more thing that can drift out of sync.
+ */
+export interface SessionsFrame {
+  type: 'sessions';
+  sessions: SessionSummary[];
+}
+
+/**
+ * Something was recorded in a session this connection is NOT viewing. The
+ * sidebar dots that row and re-sorts on `lastActiveAt`; the frames themselves
+ * are deliberately not sent, so an unread conversation costs one tiny frame
+ * instead of a whole backlog. Carries no `seq` for the same reason a
+ * heartbeat does not: it is not part of any conversation's replay log.
+ */
+export interface SessionActivityFrame {
+  type: 'session_activity';
+  sessionId: string;
+  lastActiveAt: number;
 }
 
 export interface TypingFrame {
@@ -88,6 +135,8 @@ export interface MessageFrame {
   role: 'assistant' | 'user';
   content: string;
   seq: number;
+  /** WU3: which conversation this frame belongs to. Absent on a pre-sessions server. */
+  sessionId?: string;
   ts?: number;
 }
 
@@ -99,6 +148,8 @@ export interface CardFrame {
   question: string;
   options: CardOption[];
   seq: number;
+  /** WU3: which conversation this frame belongs to. Absent on a pre-sessions server. */
+  sessionId?: string;
   ts?: number;
 }
 
@@ -109,6 +160,8 @@ export interface CardResolvedFrame {
   selectedLabel: string;
   actor: string;
   seq: number;
+  /** WU3: which conversation this frame belongs to. Absent on a pre-sessions server. */
+  sessionId?: string;
 }
 
 /** A link-style action on a generic card — opens a URL, never round-trips. */
@@ -131,6 +184,8 @@ export interface GenericCardFrame {
   links: CardLink[];
   fallbackText: string;
   seq: number;
+  /** WU3: which conversation this frame belongs to. Absent on a pre-sessions server. */
+  sessionId?: string;
   ts?: number;
 }
 
@@ -147,6 +202,8 @@ export interface EditFrame {
   id: string;
   content: string;
   seq: number;
+  /** WU3: which conversation this frame belongs to. Absent on a pre-sessions server. */
+  sessionId?: string;
   ts?: number;
 }
 
@@ -176,6 +233,8 @@ export interface FileFrame {
   downloadPath: string;
   role?: 'user' | 'assistant';
   seq: number;
+  /** WU3: which conversation this frame belongs to. Absent on a pre-sessions server. */
+  sessionId?: string;
   ts?: number;
 }
 
@@ -183,6 +242,8 @@ export type ServerFrame =
   | ReadyFrame
   | TypingFrame
   | HeartbeatFrame
+  | SessionsFrame
+  | SessionActivityFrame
   | MessageFrame
   | CardFrame
   | CardResolvedFrame
@@ -200,6 +261,13 @@ export type ServerFrame =
  */
 export interface HistoryFrame {
   type: 'history';
+  /**
+   * WU3: which conversation this replay is for. Sent on connect (the session
+   * the connection opened on) and on every switch/create — it is the
+   * server-authoritative answer to "which chat am I looking at now", which is
+   * why the client adopts it rather than trusting its own optimistic guess.
+   */
+  sessionId?: string;
   frames: ServerFrame[];
 }
 
@@ -208,6 +276,12 @@ export interface HistoryFrame {
 export interface UserMessageFrame {
   type: 'user_message';
   text: string;
+  /**
+   * WU3: which conversation to record this in. Optional on the wire —
+   * absent means "the session this connection is viewing", which is what
+   * keeps pre-sessions probe scripts working unchanged.
+   */
+  sessionId?: string;
   /**
    * Client-generated id for this send. The server echoes it back as the `id`
    * on the MessageFrame it records for replay, so the client's own optimistic
@@ -222,7 +296,23 @@ export interface ActionFrame {
   actionId: string; // "ncq:<questionId>:<index>"
 }
 
-export type ClientFrame = UserMessageFrame | ActionFrame;
+/** WU3 session ops. Create doubles as switch: the server answers with the new session's (empty) replay. */
+export interface CreateSessionFrame {
+  type: 'create_session';
+}
+
+export interface SwitchSessionFrame {
+  type: 'switch_session';
+  id: string;
+}
+
+/** Delete archives the conversation's history file rather than erasing it (WU3 design decision). */
+export interface DeleteSessionFrame {
+  type: 'delete_session';
+  id: string;
+}
+
+export type ClientFrame = UserMessageFrame | ActionFrame | CreateSessionFrame | SwitchSessionFrame | DeleteSessionFrame;
 
 // ---- Local conversation model ----
 

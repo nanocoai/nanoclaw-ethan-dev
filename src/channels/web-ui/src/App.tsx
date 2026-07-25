@@ -1,5 +1,6 @@
-import { useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useNanoclaw } from './useNanoclaw';
+import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { Login } from './components/Login';
 import { Conversation } from './components/Conversation';
@@ -15,6 +16,12 @@ export default function App() {
     status,
     items,
     typing,
+    sessions,
+    activeSessionId,
+    unreadSessionIds,
+    newSession,
+    switchSession,
+    deleteSession,
     authError,
     bundleStale,
     uploadError,
@@ -25,6 +32,9 @@ export default function App() {
   } = useNanoclaw();
 
   const promptRef = useRef<PromptInputHandle>(null);
+  // Mobile drawer only: at `md` and up the sidebar is part of the layout and
+  // this flag is ignored (see Sidebar's class switching).
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Avoid a flash of the login screen before the token bootstrap resolves.
   if (!bootstrapped) {
@@ -48,7 +58,7 @@ export default function App() {
 
   return (
     <div
-      className="flex h-full flex-col bg-zinc-950"
+      className="flex h-full bg-zinc-950"
       // Drag-drop onto the whole conversation, not just a small composer
       // target: files-IN's PromptInput owns the actual pending-file state,
       // so this just forwards dropped files to it via the imperative
@@ -62,22 +72,41 @@ export default function App() {
         if (files.length > 0) promptRef.current?.addFiles(files);
       }}
     >
-      <TopBar status={status} userId={userId} />
-      {bundleStale && <UpdateBanner onReload={() => window.location.reload()} />}
-      <Conversation
-        items={items}
-        typing={typing}
-        connected={connected}
-        token={token}
-        onChoose={chooseOption}
+      <Sidebar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        unreadSessionIds={unreadSessionIds}
+        userId={userId}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onNew={() => {
+          newSession();
+          setSidebarOpen(false);
+        }}
+        onSwitch={switchSession}
+        onDelete={deleteSession}
       />
-      <PromptInput
-        ref={promptRef}
-        disabled={!connected}
-        onSend={sendMessage}
-        uploadError={uploadError}
-        onDismissUploadError={clearUploadError}
-      />
+      {/* min-w-0: without it the conversation column refuses to shrink below
+          its content width next to the fixed-width sidebar, and long code
+          blocks push the whole page sideways. */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar status={status} userId={userId} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
+        {bundleStale && <UpdateBanner onReload={() => window.location.reload()} />}
+        <Conversation
+          items={items}
+          typing={typing}
+          connected={connected}
+          token={token}
+          onChoose={chooseOption}
+        />
+        <PromptInput
+          ref={promptRef}
+          disabled={!connected}
+          onSend={sendMessage}
+          uploadError={uploadError}
+          onDismissUploadError={clearUploadError}
+        />
+      </div>
     </div>
   );
 }

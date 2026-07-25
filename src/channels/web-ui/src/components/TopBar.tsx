@@ -7,11 +7,31 @@ const DOT: Record<ConnectionStatus, string> = {
   disconnected: 'bg-rose-500',
 };
 
-export function TopBar({ status, userId }: { status: ConnectionStatus; userId?: string | null }) {
+export function TopBar({
+  status,
+  userId,
+  onToggleSidebar,
+}: {
+  status: ConnectionStatus;
+  userId?: string | null;
+  /** WU3: opens the conversation drawer. Mobile only — at `md` and up the sidebar is always in the layout. */
+  onToggleSidebar?: () => void;
+}) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-zinc-950/80 px-4 backdrop-blur">
-      <div className="flex items-center gap-2.5">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900">
+      <div className="flex min-w-0 items-center gap-2.5">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="-ml-1 rounded-md px-1.5 py-1 text-zinc-500 transition-colors hover:text-zinc-200 md:hidden"
+            aria-label="conversations"
+            data-testid="sidebar-toggle"
+          >
+            <span className="text-base leading-none">☰</span>
+          </button>
+        )}
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900">
           <span className="h-2 w-2 rounded-full bg-indigo-400" />
         </div>
         <span className="text-sm font-semibold tracking-tight text-zinc-100">

@@ -20,6 +20,24 @@ export function isSameLocalDay(a: number, b: number): boolean {
   return startOfLocalDay(a) === startOfLocalDay(b);
 }
 
+/**
+ * Compact "how long ago" for a sidebar row: "now", "5m", "3h", "2d", then a
+ * plain date once a week has passed. Deliberately terse — the sidebar has one
+ * short line per conversation, and a full "2 hours ago" would crowd out the
+ * title, which is the thing the operator is actually scanning for.
+ */
+export function formatRelativeTime(ts: number, now: number = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - ts) / 1000));
+  if (seconds < 60) return 'now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 /** "Today" / "Yesterday" / a full weekday+date label — for a date-separator row. */
 export function formatDateSeparator(ts: number): string {
   const dayMs = 24 * 60 * 60 * 1000;

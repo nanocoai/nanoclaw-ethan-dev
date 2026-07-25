@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChatMessage, ConnectionStatus, ConversationItem, ServerFrame } from './types';
+import type { ChatMessage, ConnectionStatus, ConversationItem, ServerFrame, SessionSummary } from './types';
 
 /**
  * Pure reducer applying one server frame to the conversation. Used both for
@@ -116,11 +116,18 @@ function applyServerFrame(items: ConversationItem[], frame: ServerFrame): Conver
 /** Frame types that carry a `seq` (everything emit()-recorded server-side). */
 type SeqFrame = Exclude<
   ServerFrame,
-  { type: 'ready' } | { type: 'typing' } | { type: 'heartbeat' } | { type: 'history' }
+  | { type: 'ready' }
+  | { type: 'typing' }
+  | { type: 'heartbeat' }
+  | { type: 'history' }
+  | { type: 'sessions' }
+  | { type: 'session_activity' }
 >;
 
+const UNSEQUENCED_FRAME_TYPES = new Set(['ready', 'typing', 'heartbeat', 'history', 'sessions', 'session_activity']);
+
 function hasSeq(frame: ServerFrame): frame is SeqFrame {
-  return frame.type !== 'ready' && frame.type !== 'typing' && frame.type !== 'heartbeat' && frame.type !== 'history';
+  return !UNSEQUENCED_FRAME_TYPES.has(frame.type);
 }
 
 /**
@@ -270,6 +277,20 @@ export interface NanoclawState {
   status: ConnectionStatus;
   items: ConversationItem[];
   typing: boolean;
+  /**
+   * WU3: every conversation the server knows about, already sorted most
+   * recently active first (the server sorts; the client does not re-sort, so
+   * both agree on what "recent" means). Empty on a pre-sessions server, which
+   * is what makes the sidebar render nothing rather than a fake single row.
+   */
+  sessions: SessionSummary[];
+  /** The conversation currently on screen. Always server-confirmed: set from `ready`, then from each history replay. */
+  activeSessionId: string | null;
+  /** Session ids with activity this client has not looked at yet (the sidebar dot). Cleared on switch. */
+  unreadSessionIds: string[];
+  newSession: () => void;
+  switchSession: (id: string) => void;
+  deleteSession: (id: string) => void;
   authError: boolean;
   /**
    * P2b: true once this tab has seen the server report a `bundle` that
@@ -305,8 +326,20 @@ export function useNanoclaw(): NanoclawState {
   const [authError, setAuthError] = useState(false);
   const [bundleStale, setBundleStale] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [unreadSessionIds, setUnreadSessionIds] = useState<string[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
+
+  // The active session, readable from inside the WS handlers without
+  // re-running the connect effect on every switch (which would drop and
+  // rebuild the socket for what is purely a view change).
+  const activeSessionRef = useRef<string | null>(null);
+  const setActiveSession = useCallback((id: string | null) => {
+    activeSessionRef.current = id;
+    setActiveSessionId(id);
+  }, []);
 
   // Every seq-bearing frame this hook instance has ever applied (live or via
   // a history replay), kept sorted by seq — the merge baseline for the next
@@ -314,6 +347,13 @@ export function useNanoclaw(): NanoclawState {
   // frames, so replay and live delivery overlapping is always idempotent.
   const frameLogRef = useRef<SeqFrame[]>([]);
   const seenSeqsRef = useRef<Set<number>>(new Set());
+
+  // Which conversation the frame log above belongs to. `seq` is monotonic
+  // WITHIN a session, not across them, so a log carried over from another
+  // conversation would merge two numbering spaces into one Map and silently
+  // drop frames. A history replay for a different session therefore rebuilds
+  // the log from scratch instead of merging into it.
+  const logSessionRef = useRef<string | null>(null);
 
   // Single pending expiry timer for the ghost-typing guard — lives at the
   // hook level (not inside connect()) so it survives a WS reconnect cycle
@@ -431,8 +471,16 @@ export function useNanoclaw(): NanoclawState {
           return;
         }
         switch (frame.type) {
-          case 'ready':
+          case 'ready': {
             setStatus('connected');
+            // WU3 sidebar state. `?? []` on a pre-sessions server leaves the
+            // sidebar empty rather than inventing a row for a conversation
+            // the server has no id for.
+            setSessions(frame.sessions ?? []);
+            if (frame.activeSession) {
+              setActiveSession(frame.activeSession);
+              setUnreadSessionIds((prev) => prev.filter((id) => id !== frame.activeSession));
+            }
             // Identity, when the server has one for this connection. `??
             // null` deliberately RESETS it when the field is absent, so a
             // reconnect that falls back to token auth (or lands on a server
@@ -466,6 +514,26 @@ export function useNanoclaw(): NanoclawState {
               }
             }
             break;
+          }
+          case 'sessions':
+            setSessions(frame.sessions);
+            break;
+          case 'session_activity':
+            // A conversation this client is NOT viewing moved. Bump its
+            // position (the sidebar sorts on lastActiveAt) and dot it. The
+            // frames themselves never arrive here by design — switching to
+            // the session is what fetches them.
+            setSessions((prev) =>
+              prev
+                .map((session) =>
+                  session.id === frame.sessionId ? { ...session, lastActiveAt: frame.lastActiveAt } : session,
+                )
+                .sort((a, b) => b.lastActiveAt - a.lastActiveAt),
+            );
+            if (frame.sessionId !== activeSessionRef.current) {
+              setUnreadSessionIds((prev) => (prev.includes(frame.sessionId) ? prev : [...prev, frame.sessionId]));
+            }
+            break;
           case 'typing':
             applyTyping(frame.on);
             break;
@@ -475,14 +543,27 @@ export function useNanoclaw(): NanoclawState {
             // quiet connection. Never carries a `seq`, never touches items.
             break;
           case 'history': {
-            // Merge the replay log with whatever this connection already
-            // applied live instead of a destructive wholesale replace — see
+            // A replay for a DIFFERENT conversation (a switch, a create, or a
+            // reconnect that landed on another session) starts from an empty
+            // baseline: seq only means anything within one session, so
+            // merging across them would key two numbering spaces into one
+            // Map. Same-session replays keep the existing merge — see
             // mergeHistoryFrames for why a plain overwrite can lose a live
             // frame that outran the snapshot.
-            const merged = mergeHistoryFrames(frameLogRef.current, frame.frames);
+            const replaySession = frame.sessionId ?? logSessionRef.current;
+            const sameSession = replaySession === logSessionRef.current;
+            const merged = mergeHistoryFrames(sameSession ? frameLogRef.current : [], frame.frames);
             frameLogRef.current = merged;
+            logSessionRef.current = replaySession ?? null;
             seenSeqsRef.current = new Set(merged.map((f) => f.seq));
             setItems(merged.reduce(applyServerFrame, [] as ConversationItem[]));
+            // The server is authoritative about which conversation is on
+            // screen: adopt whatever it just replayed, and clear that row's
+            // unread dot since it is now, by definition, read.
+            if (frame.sessionId) {
+              setActiveSession(frame.sessionId);
+              setUnreadSessionIds((prev) => prev.filter((id) => id !== frame.sessionId));
+            }
             break;
           }
           case 'message':
@@ -491,6 +572,12 @@ export function useNanoclaw(): NanoclawState {
           case 'card_resolved':
           case 'edit':
           case 'file':
+            // Belt and braces: the server only routes a recorded frame to
+            // clients viewing its session (web.ts routeFrame), so this should
+            // never fire — but a frame folded into the wrong conversation is
+            // the one failure sessions exist to prevent, so it is checked
+            // rather than assumed.
+            if (frame.sessionId && activeSessionRef.current && frame.sessionId !== activeSessionRef.current) break;
             // Idempotent on seq: a frame already folded in (live, or via an
             // earlier history merge) is a no-op rather than a duplicate.
             if (seenSeqsRef.current.has(frame.seq)) break;
@@ -568,11 +655,15 @@ export function useNanoclaw(): NanoclawState {
       setItems([]);
       frameLogRef.current = [];
       seenSeqsRef.current = new Set();
+      logSessionRef.current = null;
+      setSessions([]);
+      setActiveSession(null);
+      setUnreadSessionIds([]);
       clearTypingTimer();
       setTyping(false);
       setToken(trimmed);
     },
-    [clearTypingTimer],
+    [clearTypingTimer, setActiveSession],
   );
 
   // Files-IN: POSTs a multipart /upload (token in the query string, same
@@ -592,7 +683,15 @@ export function useNanoclaw(): NanoclawState {
         const form = new FormData();
         if (text) form.append('text', text);
         for (const file of files) form.append('file', file, file.name);
-        const url = token ? `/upload?token=${encodeURIComponent(token)}` : '/upload';
+        // `sessionId` rides the query string next to the token (same
+        // convention as /files/ and the WS upgrade) so an upload lands in the
+        // conversation on screen, not in whatever the server last considered
+        // active — the HTTP path has no WebSocket to infer a view from.
+        const params = new URLSearchParams();
+        if (token) params.set('token', token);
+        if (activeSessionRef.current) params.set('sessionId', activeSessionRef.current);
+        const query = params.toString();
+        const url = query ? `/upload?${query}` : '/upload';
         const res = await fetch(url, {
           method: 'POST',
           body: form,
@@ -630,7 +729,12 @@ export function useNanoclaw(): NanoclawState {
       // find-or-append replace this echo in place instead of duplicating it
       // once the server-confirmed (seq-bearing) frame arrives.
       const clientId = `local-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-      ws.send(JSON.stringify({ type: 'user_message', text, clientId }));
+      // `sessionId` is sent explicitly even though the server would fall back
+      // to this connection's view anyway: the explicit id is what makes a
+      // message impossible to misfile if the two ever disagree (a switch
+      // still in flight, a second tab).
+      const sessionId = activeSessionRef.current ?? undefined;
+      ws.send(JSON.stringify({ type: 'user_message', text, clientId, ...(sessionId ? { sessionId } : {}) }));
       setItems((prev) => [
         ...prev,
         {
@@ -657,6 +761,57 @@ export function useNanoclaw(): NanoclawState {
 
   const clearUploadError = useCallback(() => setUploadError(null), []);
 
+  /**
+   * Clear the on-screen conversation while a switch/create is in flight. The
+   * server answers with a history replay that names the session; showing the
+   * PREVIOUS conversation until it lands would be showing the wrong chat
+   * under the new title, which is worse than showing an empty pane for one
+   * round trip.
+   */
+  const resetConversationForSwitch = useCallback(() => {
+    setItems([]);
+    frameLogRef.current = [];
+    seenSeqsRef.current = new Set();
+    logSessionRef.current = null;
+    clearTypingTimer();
+    setTyping(false);
+  }, [clearTypingTimer]);
+
+  const newSession = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    resetConversationForSwitch();
+    setActiveSession(null); // the id only exists once the server creates it
+    ws.send(JSON.stringify({ type: 'create_session' }));
+  }, [resetConversationForSwitch, setActiveSession]);
+
+  const switchSession = useCallback(
+    (id: string) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (id === activeSessionRef.current) return;
+      resetConversationForSwitch();
+      setActiveSession(id);
+      setUnreadSessionIds((prev) => prev.filter((sessionId) => sessionId !== id));
+      ws.send(JSON.stringify({ type: 'switch_session', id }));
+    },
+    [resetConversationForSwitch, setActiveSession],
+  );
+
+  const deleteSession = useCallback(
+    (id: string) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Deleting the conversation on screen leaves the pane empty until the
+      // server replays whichever one it moved this client to; deleting any
+      // other one leaves the current view untouched.
+      if (id === activeSessionRef.current) resetConversationForSwitch();
+      setUnreadSessionIds((prev) => prev.filter((sessionId) => sessionId !== id));
+      ws.send(JSON.stringify({ type: 'delete_session', id }));
+    },
+    [resetConversationForSwitch],
+  );
+
   return {
     bootstrapped,
     token,
@@ -665,6 +820,12 @@ export function useNanoclaw(): NanoclawState {
     status,
     items,
     typing,
+    sessions,
+    activeSessionId,
+    unreadSessionIds,
+    newSession,
+    switchSession,
+    deleteSession,
     authError,
     bundleStale,
     uploadError,
