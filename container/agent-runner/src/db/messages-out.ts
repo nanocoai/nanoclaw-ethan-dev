@@ -92,9 +92,7 @@ export function getMessageIdBySeq(seq: number): string | null {
   const inbound = getInboundDb();
 
   // Inbound messages: ID is already the platform message ID
-  const inRow = inbound.prepare('SELECT id FROM messages_in WHERE seq = ?').get(seq) as
-    | { id: string }
-    | undefined;
+  const inRow = inbound.prepare('SELECT id FROM messages_in WHERE seq = ?').get(seq) as { id: string } | undefined;
   if (inRow) return inRow.id;
 
   // Outbound messages: look up platform message ID from delivered table
@@ -143,6 +141,53 @@ export function getRoutingBySeq(
  */
 export function getMaxOutboundSeq(): number {
   return (getOutboundDb().prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
+}
+
+/**
+ * Highest seq ABOVE `sinceSeq` on a row that put new content in front of a
+ * person, or 0 when there is none.
+ *
+ * Narrower than getMaxOutboundSeq on purpose. Several outbound kinds move the
+ * seq without answering anyone: `system` rows are internal bookkeeping,
+ * `task_log` rows go to a run log, and an edit or a reaction rides on a `chat`
+ * row while only annotating a message that already exists. Counting any of
+ * those as an answer would let a turn that merely reacted pass as a reply,
+ * leaving whoever asked with nothing.
+ *
+ * One call answers both "did anything land?" and "what is the new baseline?".
+ * Reading those separately let a row committed by an out-of-process tool
+ * between the two reads be absorbed into the baseline without ever counting as
+ * a delivery. The scan is bounded by the caller's baseline; the cap only bites
+ * on a pathological run of annotations, where returning 0 errs toward chasing
+ * the turn rather than going quiet.
+ */
+const DELIVERY_SCAN_LIMIT = 200;
+
+export function getDeliveredSeqSince(sinceSeq: number): number {
+  const rows = getOutboundDb()
+    .prepare(
+      `SELECT seq, content FROM messages_out
+       WHERE kind IN ('chat', 'chat-sdk') AND seq > ?
+       ORDER BY seq DESC
+       LIMIT ${DELIVERY_SCAN_LIMIT}`,
+    )
+    .all(sinceSeq) as Array<{ seq: number; content: string }>;
+  for (const row of rows) {
+    if (isNewUserContent(row.content)) return row.seq;
+  }
+  return 0;
+}
+
+/** False for the operations that annotate an existing message. */
+function isNewUserContent(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as { operation?: string };
+    return parsed.operation !== 'edit' && parsed.operation !== 'reaction';
+  } catch {
+    // A chat row we cannot parse is still a delivery the host will act on;
+    // counting it avoids following a real reply with a redundant notice.
+    return true;
+  }
 }
 
 /** Get undelivered messages (for host polling — reads from outbound.db). */

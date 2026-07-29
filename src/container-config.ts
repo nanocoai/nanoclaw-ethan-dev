@@ -29,6 +29,15 @@ export interface AdditionalMountConfig {
   readonly?: boolean;
 }
 
+/**
+ * How the agent in a group reaches a destination.
+ *
+ * `envelope`: final-text `<message to="…">` blocks deliver, alongside the
+ * outbound tools. `tools-only`: only an explicit outbound tool call delivers
+ * and everything else the agent writes stays private. Absent means `envelope`.
+ */
+export type DeliveryMode = 'envelope' | 'tools-only';
+
 /** Shape of the materialized `container.json` file read by the container runner. */
 export interface ContainerConfig {
   mcpServers: Record<string, McpServerConfig>;
@@ -43,6 +52,7 @@ export interface ContainerConfig {
   maxMessagesPerPrompt?: number;
   model?: string;
   effort?: string;
+  deliveryMode?: DeliveryMode;
 }
 
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
@@ -63,7 +73,14 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     maxMessagesPerPrompt: row.max_messages_per_prompt ?? undefined,
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
+    // Anything the column doesn't recognize resolves to the default rather
+    // than reaching the runner: an unreadable mode must never widen delivery.
+    deliveryMode: isDeliveryMode(row.delivery_mode) ? row.delivery_mode : undefined,
   };
+}
+
+function isDeliveryMode(value: string | null): value is DeliveryMode {
+  return value === 'envelope' || value === 'tools-only';
 }
 
 /**

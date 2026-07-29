@@ -84,6 +84,14 @@ function commandDecide(cmd: CommandDef, input: GuardInput) {
     if (args.cli_scope !== undefined || args['cli-scope'] !== undefined) {
       return DENY('Cannot change cli_scope from a group-scoped agent.');
     }
+
+    // Same class as cli_scope: delivery_mode is the boundary deciding what the
+    // agent's own output is allowed to reach, so it can never be set from
+    // inside that boundary. An approval hold is not enough — the request itself
+    // must not exist, or a tools-only agent could ask an admin to widen it.
+    if (args.delivery_mode !== undefined || args['delivery-mode'] !== undefined) {
+      return DENY('Cannot change delivery_mode from a group-scoped agent.');
+    }
   }
 
   if (cmd.access === 'approval') {
