@@ -776,6 +776,7 @@ export async function drainPendingQuestions(
 
 export class OpenCodeProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = false;
+  readonly usesMemoryScaffold = true;
 
   private readonly options: ProviderOptions;
   private activeSessionId: string | undefined;

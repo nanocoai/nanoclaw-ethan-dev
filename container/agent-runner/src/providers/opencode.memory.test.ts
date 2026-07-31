@@ -181,6 +181,10 @@ describe('createMemoryLifecycle after compaction', () => {
 });
 
 describe('OpenCodeProvider memory registration', () => {
+  it('opts into the persistent memory scaffold on compatibility bases', () => {
+    expect(new OpenCodeProvider().usesMemoryScaffold).toBe(true);
+  });
+
   it('refuses to start a query when the shared hook was never registered', () => {
     expect(() => new OpenCodeProvider().query({ prompt: 'hi', cwd: '/workspace' })).toThrow(
       /memory session hook was not registered/i,

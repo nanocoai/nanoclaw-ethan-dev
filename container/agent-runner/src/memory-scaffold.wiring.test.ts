@@ -19,4 +19,9 @@ describe('memory scaffold boot wiring', () => {
   it('imports ensureMemoryScaffold from the seam module', () => {
     expect(indexSrc).toContain("import { ensureMemoryScaffold } from './memory-scaffold.js'");
   });
+
+  it('registers the shared memory hook before polling providers that support it', () => {
+    expect(indexSrc).toContain("import { MEMORY_SESSION_HOOK } from './memory/session-hook.js'");
+    expect(indexSrc).toContain('provider.registerMemorySessionHook?.(MEMORY_SESSION_HOOK)');
+  });
 });

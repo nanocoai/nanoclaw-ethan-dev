@@ -28,6 +28,7 @@ import { fileURLToPath } from 'url';
 import { loadConfig } from './config.js';
 import { buildSystemPromptAddendum } from './destinations.js';
 import { ensureMemoryScaffold } from './memory-scaffold.js';
+import { MEMORY_SESSION_HOOK } from './memory/session-hook.js';
 // Providers barrel — each enabled provider self-registers on import.
 // Provider skills append imports to providers/index.ts.
 import './providers/index.js';
@@ -101,6 +102,7 @@ async function main(): Promise<void> {
   // boot (idempotent). Default off — the trunk default (Claude) omits the flag
   // and keeps its native memory untouched.
   if (provider.usesMemoryScaffold) ensureMemoryScaffold();
+  provider.registerMemorySessionHook?.(MEMORY_SESSION_HOOK);
 
   await runPollLoop({
     provider,
