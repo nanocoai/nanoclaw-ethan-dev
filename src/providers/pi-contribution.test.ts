@@ -41,6 +41,7 @@ function runContribution() {
     agentGroupId: GROUP_ID,
     groupDir: path.join(TEST_ROOT, 'groups', 'pi-group'),
     selectedSkills: [],
+    providerSettings: {},
     hostEnv: { ...process.env, HOME },
   });
 }

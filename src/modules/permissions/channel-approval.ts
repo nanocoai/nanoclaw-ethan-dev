@@ -11,8 +11,8 @@
  *   3. Deliver a card with three action families:
  *        a. Connect to [agent] — one button per existing agent group.
  *           Single-agent installs get a one-click connect.
- *        b. Connect new agent — prompts for a free-text name, creates
- *           the agent immediately on reply.
+ *        b. Connect new agent — provisions an OpenCode agent through
+ *           name, model-provider, live model discovery, and confirmation steps.
  *        c. Reject — deny the channel.
  *   4. Record a `pending_channel_approvals` row holding the original event
  *      so it can be re-routed on connect/create.
@@ -27,8 +27,9 @@
  *
  * On connect new agent (handler in index.ts):
  *   - Prompt for a free-text agent name via DM
- *   - On reply: create the agent group + filesystem, then wire
- *     and replay as above
+ *   - Ask which OpenCode model provider to use and read its available models
+ *   - On confirmation: create the configured group + filesystem, then
+ *     wire and replay as above
  *
  * On reject:
  *   - Set `messaging_groups.denied_at = now()` so the router stops
@@ -48,11 +49,12 @@ import { normalizeOptions, type NormalizedOption, type RawOption } from '../../c
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getChannelAdapter } from '../../channels/channel-registry.js';
 import { getMessagingGroup, updateMessagingGroup } from '../../db/messaging-groups.js';
+import { updateContainerConfigJson, updateContainerConfigScalars } from '../../db/container-configs.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
-import type { AgentGroup } from '../../types.js';
+import type { AgentGroup, DiscoveredOpenCodeModel, OpenCodeModelProvider } from '../../types.js';
 import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
 import { createPendingChannelApproval, hasInFlightChannelApproval } from './db/pending-channel-approvals.js';
 import { hasAdminPrivilege } from './db/user-roles.js';
@@ -275,7 +277,11 @@ export function buildAgentSelectionOptions(
  * Create a new agent group and initialize its filesystem. Handles
  * folder-name collisions with numeric suffixes.
  */
-export function createNewAgentGroup(name: string): AgentGroup {
+export function createNewAgentGroup(
+  name: string,
+  modelProvider: OpenCodeModelProvider,
+  model: DiscoveredOpenCodeModel,
+): AgentGroup {
   let folder = toFolder(name);
   const baseFolder = folder;
   let suffix = 2;
@@ -294,8 +300,23 @@ export function createNewAgentGroup(name: string): AgentGroup {
   });
 
   const ag = getAgentGroup(agId)!;
-  // Channel-approved groups get the built-in default provider (claude); the
-  // operator flips a group with `ncl groups config update --provider`.
-  initGroupFilesystem(ag);
+  // OpenCode registration is a provisioning operation, not a later provider
+  // flip: stamp the provider, connection instructions, model,
+  // and a snapshot of every backend-specific setting before the first spawn.
+  initGroupFilesystem(ag, { provider: 'opencode', instructions: modelProvider.instructions ?? undefined });
+  updateContainerConfigScalars(ag.id, {
+    provider: 'opencode',
+    model: model.id,
+  });
+  updateContainerConfigJson(ag.id, 'provider_settings', {
+    opencode: {
+      modelProvider: modelProvider.provider_id,
+      baseUrl: modelProvider.base_url,
+      smallModel: model.id,
+      contextLimit: model.contextLimit,
+      outputLimit: model.outputLimit,
+      inputModalities: model.inputModalities,
+    },
+  });
   return ag;
 }

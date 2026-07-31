@@ -54,7 +54,11 @@ vi.mock('./user-dm.js', () => ({
 
 vi.mock('../../config.js', async () => {
   const actual = await vi.importActual('../../config.js');
-  return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-channel-approval' };
+  return {
+    ...actual,
+    DATA_DIR: '/tmp/nanoclaw-test-channel-approval',
+    GROUPS_DIR: '/tmp/nanoclaw-test-channel-approval/groups',
+  };
 });
 
 const TEST_DIR = '/tmp/nanoclaw-test-channel-approval';
@@ -68,6 +72,11 @@ beforeEach(async () => {
   fs.mkdirSync(TEST_DIR, { recursive: true });
   const db = initTestDb();
   runMigrations(db);
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic' }] }))),
+  );
 
   await import('./index.js'); // register hooks
 
@@ -100,12 +109,35 @@ beforeEach(async () => {
        VALUES (?, ?, ?, ?)`,
     )
     .run('telegram:owner', 'telegram', 'mg-dm-owner', now());
+  getDb()
+    .prepare(
+      `INSERT INTO opencode_model_providers (
+         id, name, provider_id, discovery_type, base_url, models_url,
+         context_limit, output_limit, input_modalities,
+         instructions, enabled, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    )
+    .run(
+      'provider-local',
+      'Spark local',
+      'openai',
+      'openai-compatible',
+      'http://172.17.0.1:8000/v1',
+      null,
+      65536,
+      8192,
+      'image',
+      'Use tools to deliver every response.',
+      now(),
+      now(),
+    );
 
   deliverMock.mockClear();
 });
 
 afterEach(() => {
   closeDb();
+  vi.unstubAllGlobals();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 
@@ -437,6 +469,81 @@ describe('unknown-channel registration flow', () => {
     const stillPending = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number })
       .c;
     expect(stillPending).toBe(1);
+  });
+
+  it('provisions and wires a new OpenCode agent after provider and model approval', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { getResponseHandlers } = await import('../../response-registry.js');
+    const { getDb } = await import('../../db/connection.js');
+
+    await routeInbound(groupMention('chat-create-opencode'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+      messaging_group_id: string;
+    };
+
+    const click = async (value: string) => {
+      for (const handler of getResponseHandlers()) {
+        if (
+          await handler({
+            questionId: pending.messaging_group_id,
+            value,
+            userId: 'owner',
+            channelType: 'telegram',
+            platformId: 'dm-owner',
+            threadId: null,
+          })
+        ) {
+          break;
+        }
+      }
+    };
+
+    await click('new_agent');
+    await routeInbound({
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+      message: {
+        id: 'new-agent-name',
+        kind: 'chat' as const,
+        content: JSON.stringify({ senderId: 'owner', text: 'Newbie' }),
+        timestamp: now(),
+      },
+    });
+    await click('opencode_provider:provider-local');
+    await click('opencode_model:openai%2FRedHatAI%2Fgemma-4-26B-A4B-it-FP8-dynamic');
+    await click('confirm_new_agent');
+
+    const created = getDb().prepare('SELECT id FROM agent_groups WHERE name = ?').get('Newbie') as
+      | { id: string }
+      | undefined;
+    expect(created).toBeDefined();
+    const wiring = getDb()
+      .prepare('SELECT 1 FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?')
+      .get(pending.messaging_group_id, created!.id);
+    expect(wiring).toBeDefined();
+
+    const config = getDb()
+      .prepare('SELECT provider, model, provider_settings FROM container_configs WHERE agent_group_id = ?')
+      .get(created!.id) as {
+      provider: string;
+      model: string;
+      provider_settings: string;
+    };
+    expect(config.provider).toBe('opencode');
+    expect(config.model).toBe('openai/RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic');
+    expect(JSON.parse(config.provider_settings)).toEqual({
+      opencode: {
+        modelProvider: 'openai',
+        baseUrl: 'http://172.17.0.1:8000/v1',
+        smallModel: 'openai/RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic',
+        contextLimit: 65536,
+        outputLimit: 8192,
+        inputModalities: 'image',
+      },
+    });
+    expect(getDb().prepare('SELECT 1 FROM pending_channel_approvals').get()).toBeUndefined();
   });
 });
 

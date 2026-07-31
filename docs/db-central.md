@@ -316,12 +316,35 @@ CREATE TABLE container_configs (
   packages_npm           TEXT NOT NULL DEFAULT '[]',
   additional_mounts      TEXT NOT NULL DEFAULT '[]',
   cli_scope              TEXT NOT NULL DEFAULT 'group',   -- disabled | group | global
+  provider_settings      TEXT NOT NULL DEFAULT '{}',
   updated_at             TEXT NOT NULL
 );
 ```
 
 - **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/claude-md-compose.ts`
 - **Writers:** `src/db/container-configs.ts`, `src/modules/self-mod/apply.ts`, `src/backfill-container-configs.ts`
+
+### 1.16 `opencode_model_providers`
+
+Operator-owned OpenCode provider connections offered during new-agent registration. Models are discovered live; credentials remain in OneCLI and are never stored in this table.
+
+```sql
+CREATE TABLE opencode_model_providers (
+  id               TEXT PRIMARY KEY,
+  name             TEXT NOT NULL UNIQUE,
+  provider_id      TEXT NOT NULL,
+  discovery_type   TEXT NOT NULL DEFAULT 'models-dev',
+  base_url         TEXT,
+  models_url       TEXT,
+  context_limit    INTEGER,
+  output_limit     INTEGER,
+  input_modalities TEXT NOT NULL DEFAULT '',
+  instructions     TEXT,
+  enabled          INTEGER NOT NULL DEFAULT 1,
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+```
 
 ---
 
@@ -330,8 +353,8 @@ CREATE TABLE container_configs (
 Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMigrations()` in `src/db/migrations/index.ts`. It:
 
 1. Creates `schema_version` if absent.
-2. Reads `MAX(version)` — call it `current`.
-3. For each migration with `version > current`, executes `up(db)` inside a transaction and appends a `schema_version` row.
+2. Reads the applied migration names.
+3. Executes each unapplied migration in barrel order inside a transaction and appends a `schema_version` row.
 
 | # | File | Introduces |
 |---|------|------------|
@@ -344,6 +367,7 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 009 | `009-drop-pending-credentials.ts` | Drop the defunct `pending_credentials` table |
 | 014 | `014-container-configs.ts` | `container_configs` — per-agent-group container runtime config |
 | 015 | `015-cli-scope.ts` | `ALTER TABLE container_configs ADD COLUMN cli_scope` |
+| 021 | `021-opencode-registration-provisioning.ts` | OpenCode provider connections, restart-safe registration state, and `container_configs.provider_settings` |
 
 Numbers 005 and 006 are intentionally absent — migrations were renumbered during early development.
 

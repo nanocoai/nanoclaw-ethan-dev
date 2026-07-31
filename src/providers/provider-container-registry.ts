@@ -40,6 +40,10 @@ export interface ProviderContainerContext {
    * providers use this to sync their own skill-discovery links.
    */
   selectedSkills: string[];
+  /** Model selected in the group's container config. */
+  model?: string;
+  /** Provider-specific settings copied into the group's container config at provisioning time. */
+  providerSettings: Record<string, unknown>;
   /** `process.env` at spawn time — pull passthrough values from here. */
   hostEnv: NodeJS.ProcessEnv;
 }

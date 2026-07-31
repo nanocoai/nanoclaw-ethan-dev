@@ -3,6 +3,7 @@
  * `registerResource(...)` call.
  */
 import './groups.js';
+import './opencode-model-providers.js';
 import './messaging-groups.js';
 import './wirings.js';
 import './users.js';

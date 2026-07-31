@@ -98,6 +98,7 @@ ncl help
 | Resource | Verbs | What it is |
 |----------|-------|------------|
 | groups | list, get, create, update, delete, restart, config get/update, config add-mcp-server/remove-mcp-server, config add-package/remove-package | Agent groups (workspace, personality, container config) |
+| opencode-model-providers | list, get, create, update, delete | OpenCode provider connections whose models are discovered during registration |
 | messaging-groups | list, get, create, update, delete | A single chat/channel on one platform |
 | wirings | list, get, create, update, delete | Links a messaging group to an agent group (session mode, triggers) |
 | users | list, get, create, update | Platform identities (`<channel>:<handle>`) |
@@ -130,7 +131,7 @@ A second tier (direct source-level self-edits via a draft/activate flow) is plan
 
 ## Container Config
 
-Per-agent-group container runtime config (provider, model, packages, MCP servers, mounts, etc.) lives in the `container_configs` table in the central DB. Materialized to `groups/<folder>/container.json` at spawn time so the container runner can read it. Managed via `ncl groups config get/update` and the self-mod MCP tools.
+Per-agent-group container runtime config (provider, model, provider-specific settings, packages, MCP servers, mounts, etc.) lives in the `container_configs` table in the central DB. Materialized to `groups/<folder>/container.json` at spawn time so the container runner can read it. Managed via `ncl groups config get/update`, OpenCode model provider connections, and the self-mod MCP tools. See [docs/opencode-registration.md](docs/opencode-registration.md).
 
 **`cli_scope`** — controls what the agent can do with `ncl` from inside the container:
 

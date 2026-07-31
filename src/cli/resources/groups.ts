@@ -32,6 +32,7 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     packages_npm: JSON.parse(row.packages_npm),
     additional_mounts: JSON.parse(row.additional_mounts),
     cli_scope: row.cli_scope,
+    provider_settings: JSON.parse(row.provider_settings ?? '{}'),
     updated_at: row.updated_at,
   };
 }

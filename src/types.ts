@@ -25,7 +25,34 @@ export interface ContainerConfigRow {
   packages_npm: string; // JSON: string[]
   additional_mounts: string; // JSON: AdditionalMountConfig[]
   cli_scope: string; // 'disabled' | 'group' | 'global'
+  provider_settings?: string; // JSON: provider-specific runtime settings, keyed by agent provider
   updated_at: string;
+}
+
+/** Operator-owned OpenCode model-provider connection. No credentials are stored. */
+export interface OpenCodeModelProvider {
+  id: string;
+  name: string;
+  provider_id: string;
+  discovery_type: 'models-dev' | 'openai-compatible';
+  base_url: string | null;
+  models_url: string | null;
+  context_limit: number | null;
+  output_limit: number | null;
+  input_modalities: string;
+  instructions: string | null;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A model discovered at registration time from OpenCode's catalog or a provider endpoint. */
+export interface DiscoveredOpenCodeModel {
+  id: string;
+  name: string;
+  contextLimit: number | null;
+  outputLimit: number | null;
+  inputModalities: string;
 }
 
 export type UnknownSenderPolicy = 'strict' | 'request_approval' | 'public';

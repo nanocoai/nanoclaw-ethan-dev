@@ -21,9 +21,30 @@ export interface PendingChannelApproval {
   title: string;
   /** Normalized options (JSON-encoded NormalizedOption[]) — same shape persisted on pending_approvals. */
   options_json: string;
+  provisioning_step:
+    | 'idle'
+    | 'awaiting_name'
+    | 'awaiting_provider'
+    | 'awaiting_model_query'
+    | 'awaiting_model'
+    | 'awaiting_confirmation';
+  new_agent_name: string | null;
+  selected_provider_id: string | null;
+  selected_model_id: string | null;
 }
 
-export function createPendingChannelApproval(row: PendingChannelApproval): void {
+export function createPendingChannelApproval(
+  row: Pick<
+    PendingChannelApproval,
+    | 'messaging_group_id'
+    | 'agent_group_id'
+    | 'original_message'
+    | 'approver_user_id'
+    | 'created_at'
+    | 'title'
+    | 'options_json'
+  >,
+): void {
   getDb()
     .prepare(
       `INSERT INTO pending_channel_approvals (
@@ -55,6 +76,36 @@ export function updatePendingChannelApprovalCard(messagingGroupId: string, title
   getDb()
     .prepare('UPDATE pending_channel_approvals SET title = ?, options_json = ? WHERE messaging_group_id = ?')
     .run(title, optionsJson, messagingGroupId);
+}
+
+export function updatePendingChannelProvisioning(
+  messagingGroupId: string,
+  updates: Partial<
+    Pick<PendingChannelApproval, 'provisioning_step' | 'new_agent_name' | 'selected_provider_id' | 'selected_model_id'>
+  >,
+): void {
+  const entries = Object.entries(updates);
+  if (entries.length === 0) return;
+  const values: Record<string, unknown> = { messaging_group_id: messagingGroupId };
+  const set = entries.map(([key, value]) => {
+    values[key] = value;
+    return `${key} = @${key}`;
+  });
+  getDb()
+    .prepare(`UPDATE pending_channel_approvals SET ${set.join(', ')} WHERE messaging_group_id = @messaging_group_id`)
+    .run(values);
+}
+
+/** Oldest restart-safe name or model-search prompt for this approver. */
+export function getPendingTextInputForApprover(approverUserId: string): PendingChannelApproval | undefined {
+  return getDb()
+    .prepare(
+      `SELECT * FROM pending_channel_approvals
+        WHERE approver_user_id = ? AND provisioning_step IN ('awaiting_name', 'awaiting_model_query')
+        ORDER BY created_at, messaging_group_id
+        LIMIT 1`,
+    )
+    .get(approverUserId) as PendingChannelApproval | undefined;
 }
 
 export function deletePendingChannelApproval(messagingGroupId: string): void {

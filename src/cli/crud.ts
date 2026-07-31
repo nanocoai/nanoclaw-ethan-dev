@@ -68,6 +68,12 @@ export interface ResourceDef {
     update?: Access;
     delete?: Access;
   };
+  /** Columns forming an idempotent natural key for generic create. */
+  naturalKey?: string[];
+  /** Fill defaults and validate a complete create payload before insertion. */
+  resolveDefaults?: (values: Record<string, unknown>) => void;
+  /** Validate and normalize a partial update against the current row. */
+  preUpdate?: (updates: Record<string, unknown>, current: Record<string, unknown>) => void;
   /** Non-standard verbs (grant, revoke, add, remove, restart, etc.). */
   customOperations?: Record<string, CustomOperation>;
 }
@@ -131,6 +137,8 @@ function genericCreate(def: ResourceDef) {
   return async (args: Record<string, unknown>) => {
     const values: Record<string, unknown> = {};
 
+    // Collect generated and explicit values first so cross-field validation
+    // runs before static defaults fill anything the caller omitted.
     for (const col of def.columns) {
       if (col.generated) {
         if (col.name === def.idColumn) {
@@ -149,11 +157,26 @@ function genericCreate(def: ResourceDef) {
         values[col.name] = col.type === 'number' ? Number(v) : v;
       } else if (col.required) {
         throw new Error(`--${col.name.replace(/_/g, '-')} is required`);
-      } else if (col.default !== undefined) {
+      }
+    }
+
+    if (def.resolveDefaults) def.resolveDefaults(values);
+
+    for (const col of def.columns) {
+      if (col.generated || values[col.name] !== undefined) continue;
+      if (col.default !== undefined) {
         values[col.name] = col.default;
       } else if (col.defaultFrom !== undefined && values[col.defaultFrom] !== undefined) {
         values[col.name] = values[col.defaultFrom];
       }
+    }
+
+    if (def.naturalKey?.length) {
+      const where = def.naturalKey.map((column) => `${column} = ?`).join(' AND ');
+      const existing = getDb()
+        .prepare(`SELECT ${visibleColumns(def).join(', ')} FROM ${def.table} WHERE ${where}`)
+        .get(...def.naturalKey.map((column) => values[column]));
+      if (existing) return existing;
     }
 
     const colNames = Object.keys(values);
@@ -167,6 +190,7 @@ function genericCreate(def: ResourceDef) {
 
 function genericUpdate(def: ResourceDef) {
   const updatableCols = def.columns.filter((c) => c.updatable);
+  const cols = visibleColumns(def).join(', ');
   return async (args: Record<string, unknown>) => {
     const id = args.id as string;
     if (!id) throw new Error(`${def.name} id is required`);
@@ -187,6 +211,14 @@ function genericUpdate(def: ResourceDef) {
       );
     }
 
+    if (def.preUpdate) {
+      const current = getDb().prepare(`SELECT ${cols} FROM ${def.table} WHERE ${def.idColumn} = ?`).get(id) as
+        | Record<string, unknown>
+        | undefined;
+      if (!current) throw new Error(`${def.name} not found: ${id}`);
+      def.preUpdate(updates, current);
+    }
+
     const setClause = Object.keys(updates)
       .map((k) => `${k} = @${k}`)
       .join(', ');
@@ -195,7 +227,6 @@ function genericUpdate(def: ResourceDef) {
       .run({ ...updates, _id: id });
     if (result.changes === 0) throw new Error(`${def.name} not found: ${id}`);
 
-    const cols = visibleColumns(def).join(', ');
     return getDb().prepare(`SELECT ${cols} FROM ${def.table} WHERE ${def.idColumn} = ?`).get(id);
   };
 }
