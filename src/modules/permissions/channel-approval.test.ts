@@ -22,6 +22,24 @@ import { createMessagingGroup, getMessagingGroupByPlatform } from '../../db/mess
 import { upsertUser } from './db/users.js';
 import { grantRole } from './db/user-roles.js';
 
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  return {
+    ...actual,
+    execFile: vi.fn(
+      (
+        _file: string,
+        _args: string[],
+        _options: Record<string, unknown>,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(null, JSON.stringify({ data: [{ id: 'RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic' }] }), '');
+        return {};
+      },
+    ),
+  };
+});
+
 // Mock container runner — prevent actual docker spawn.
 vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),

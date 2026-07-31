@@ -105,4 +105,19 @@ describe('OpenCode model discovery', () => {
     );
     expect(fetchImpl).toHaveBeenCalledWith('https://catalog.example.test/models', expect.any(Object));
   });
+
+  it('uses the OneCLI gateway runner for a custom endpoint when no test fetch is injected', async () => {
+    const oneCliFetchImpl = vi.fn(async () => ({ data: [{ id: 'secured-model' }] }));
+    const models = await discoverOpenCodeModels(
+      provider({
+        discovery_type: 'openai-compatible',
+        base_url: 'https://secured.example.test/v1',
+      }),
+      undefined,
+      oneCliFetchImpl,
+    );
+
+    expect(oneCliFetchImpl).toHaveBeenCalledWith('https://secured.example.test/v1/models');
+    expect(models[0].id).toBe('openai/secured-model');
+  });
 });

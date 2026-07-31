@@ -1,9 +1,12 @@
+import { execFile } from 'child_process';
+
 import type { DiscoveredOpenCodeModel, OpenCodeModelProvider } from '../types.js';
 
 const MODELS_DEV_URL = 'https://models.dev/api.json';
 const MAX_DISCOVERY_BYTES = 8 * 1024 * 1024;
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+type JsonFetchLike = (url: string) => Promise<unknown>;
 
 function positiveInteger(value: unknown): number | null {
   const number = Number(value);
@@ -40,6 +43,50 @@ async function fetchJson(url: string, authenticated: boolean, fetchImpl: FetchLi
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Custom endpoints may require a credential held by OneCLI. Run only that
+ * model-list request through the gateway CLI so the host never receives the
+ * credential value and the rest of NanoClaw's network traffic is unchanged.
+ */
+function fetchJsonViaOneCli(url: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'onecli',
+      [
+        'run',
+        '--',
+        'curl',
+        '--fail',
+        '--silent',
+        '--show-error',
+        '--max-time',
+        '10',
+        '--proto',
+        '=http,https',
+        '--header',
+        'Authorization: Bearer placeholder',
+        url,
+      ],
+      { encoding: 'utf8', maxBuffer: MAX_DISCOVERY_BYTES + 1, timeout: 15_000 },
+      (error, stdout) => {
+        if (error) {
+          reject(new Error('model discovery through OneCLI failed'));
+          return;
+        }
+        if (Buffer.byteLength(stdout, 'utf8') > MAX_DISCOVERY_BYTES) {
+          reject(new Error('model discovery response is too large'));
+          return;
+        }
+        try {
+          resolve(JSON.parse(stdout) as unknown);
+        } catch {
+          reject(new Error('model discovery returned invalid JSON'));
+        }
+      },
+    );
+  });
 }
 
 function fullModelId(providerId: string, modelId: string): string {
@@ -124,12 +171,18 @@ function modelListUrl(provider: OpenCodeModelProvider): string {
 /** Discover selectable models without storing a NanoClaw model allowlist. */
 export async function discoverOpenCodeModels(
   provider: OpenCodeModelProvider,
-  fetchImpl: FetchLike = globalThis.fetch,
+  fetchImpl?: FetchLike,
+  oneCliFetchImpl: JsonFetchLike = fetchJsonViaOneCli,
 ): Promise<DiscoveredOpenCodeModel[]> {
   const models =
     provider.discovery_type === 'openai-compatible'
-      ? discoverFromOpenAiEndpoint(provider, await fetchJson(modelListUrl(provider), true, fetchImpl))
-      : discoverFromModelsDev(provider, await fetchJson(MODELS_DEV_URL, false, fetchImpl));
+      ? discoverFromOpenAiEndpoint(
+          provider,
+          fetchImpl
+            ? await fetchJson(modelListUrl(provider), true, fetchImpl)
+            : await oneCliFetchImpl(modelListUrl(provider)),
+        )
+      : discoverFromModelsDev(provider, await fetchJson(MODELS_DEV_URL, false, fetchImpl ?? globalThis.fetch));
   if (models.length === 0) throw new Error(`No text models were discovered for ${provider.name}`);
   return models;
 }
