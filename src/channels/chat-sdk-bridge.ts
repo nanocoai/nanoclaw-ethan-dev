@@ -437,21 +437,23 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           return;
         }
         const options: NormalizedOption[] = normalizeOptions(content.options as never);
+        const buttons = options.map((opt, idx) =>
+          // Encode button id/value with the option index rather than the
+          // full value. Telegram caps callback_data at 64 bytes, and
+          // long values (e.g. ISO datetimes, URLs) push the JSON payload
+          // well past that. The onAction handlers resolve the index back
+          // to the real value via getAskQuestionRender(questionId).
+          Button({ id: `ncq:${questionId}:${idx}`, label: opt.label, value: String(idx), style: opt.style }),
+        );
+        // Telegram maps each Actions block to one inline-keyboard row. A
+        // single row truncates provider and model names as the option count
+        // grows, so give every Telegram choice its own readable row. Other
+        // adapters retain the compact shared row they already render well.
+        const actionRows =
+          adapter.name === 'telegram' ? buttons.map((button) => Actions([button])) : [Actions(buttons)];
         const card = Card({
           title,
-          children: [
-            CardText(question),
-            Actions(
-              // Encode button id/value with the option index rather than the
-              // full value. Telegram caps callback_data at 64 bytes, and
-              // long values (e.g. ISO datetimes, URLs) push the JSON payload
-              // well past that. The onAction handlers resolve the index back
-              // to the real value via getAskQuestionRender(questionId).
-              options.map((opt, idx) =>
-                Button({ id: `ncq:${questionId}:${idx}`, label: opt.label, value: String(idx), style: opt.style }),
-              ),
-            ),
-          ],
+          children: [CardText(question), ...actionRows],
         });
         const result = await adapter.postMessage(tid, {
           card,

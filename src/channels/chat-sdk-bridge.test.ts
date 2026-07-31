@@ -287,6 +287,36 @@ describe('createChatSdkBridge.deliver — ask_question cards (button styles)', (
     expect(buttons.map((b) => b.style)).toEqual(['primary', 'danger', undefined]);
   });
 
+  it('renders Telegram question options one per keyboard row so long labels remain readable', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ name: 'telegram', postMessage }),
+      supportsThreads: false,
+    });
+    await bridge.deliver('telegram:42', null, {
+      kind: 'chat-sdk',
+      content: {
+        type: 'ask_question',
+        questionId: 'q-provider',
+        title: 'Choose an OpenCode provider',
+        question: 'Which provider should this agent use?',
+        options: ['Anthropic', 'OpenRouter', 'Spark Nemotron', 'Spark primary', 'Cancel'],
+      },
+    });
+
+    const message = calls[0].message as {
+      card?: { children?: Array<{ type?: string; children?: CapturedButton[] }> };
+    };
+    const rows = message.card?.children?.filter((child) => child.type === 'actions') ?? [];
+    expect(rows.map((row) => row.children?.map((button) => button.label))).toEqual([
+      ['Anthropic'],
+      ['OpenRouter'],
+      ['Spark Nemotron'],
+      ['Spark primary'],
+      ['Cancel'],
+    ]);
+  });
+
   it('drops invalid styles before they reach the Button (delivery goes through normalizeOptions)', async () => {
     const { calls, postMessage } = makePostCapture();
     const bridge = createChatSdkBridge({
