@@ -49,6 +49,18 @@ describe('cli-tools manifest', () => {
     }
   });
 
+  it('pins the Pi CLI and companion packages to one release', () => {
+    const piPackages = [
+      '@earendil-works/pi-coding-agent',
+      '@earendil-works/pi-ai',
+      '@earendil-works/pi-agent-core',
+      '@earendil-works/pi-tui',
+    ];
+    const versions = piPackages.map((name) => manifest.find((tool) => tool.name === name)?.version);
+    expect(versions.every(Boolean)).toBe(true);
+    expect(new Set(versions).size).toBe(1);
+  });
+
   it('is wired into the Dockerfile build (COPY manifest + run installer)', () => {
     expect(dockerfile).toMatch(/COPY cli-tools\.json install-cli-tools\.sh/);
     expect(dockerfile).toMatch(/install-cli-tools\.sh \/tmp\/cli-tools\.json/);

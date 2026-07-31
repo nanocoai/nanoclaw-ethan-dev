@@ -3,5 +3,8 @@
   { "name": "agent-browser", "version": "0.27.1", "onlyBuilt": true },
   { "name": "@anthropic-ai/claude-code", "version": "2.1.197", "onlyBuilt": true },
   { "name": "@earendil-works/pi-coding-agent", "version": "0.80.3" },
+  { "name": "@earendil-works/pi-ai", "version": "0.80.3" },
+  { "name": "@earendil-works/pi-agent-core", "version": "0.80.3" },
+  { "name": "@earendil-works/pi-tui", "version": "0.80.3" },
   { "name": "opencode-ai", "version": "1.4.17" }
 ]
