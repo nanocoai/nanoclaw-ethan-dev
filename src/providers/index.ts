@@ -6,3 +6,4 @@
 // Skills add a new provider by appending one import line below.
 
 import './pi.js';
+import './opencode.js';

@@ -4,3 +4,4 @@
 
 import './claude.js';
 import './pi.js';
+import './opencode.js';
