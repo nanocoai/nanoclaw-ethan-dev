@@ -81,12 +81,14 @@ prints a `sgnl://linkdevice…` URL, and renders it as a scannable QR. You scan 
 once from the phone that already runs Signal; that phone's number becomes the
 account NanoClaw sends and receives as — no number is registered.
 
-The device-link runs signal-cli, so it must be reachable first — on `PATH`, or at
-`$SIGNAL_CLI_PATH`. If step 1's install didn't land, the link step has nothing to
-drive; confirm it's present before linking (re-run step 1 if this fails):
+The device-link runs signal-cli, so it must be reachable first — on `PATH`, at
+`$SIGNAL_CLI_PATH`, or at the install location `~/.local/bin/signal-cli` (where
+step 1 puts it; a shell in the same setup run may not have that dir on `PATH`
+yet). If step 1's install didn't land, the link step has nothing to drive;
+confirm it's present before linking (re-run step 1 if this fails):
 
 ```nc:run effect:check
-command -v signal-cli >/dev/null 2>&1 || [ -x "$SIGNAL_CLI_PATH" ]
+command -v signal-cli >/dev/null 2>&1 || [ -x "$SIGNAL_CLI_PATH" ] || [ -x "$HOME/.local/bin/signal-cli" ]
 ```
 
 Tell the user:
@@ -95,7 +97,7 @@ Tell the user:
 Link NanoClaw to your Signal account:
 1. On the phone that runs Signal, open Signal → Settings → Linked Devices → Link New Device.
 2. Scan the QR code shown below — or open the `sgnl://linkdevice…` link printed under it on that phone.
-3. Wait for confirmation. The linking URL expires after ~3 minutes; re-run this step for a fresh one.
+3. Wait for confirmation. Scanning starts a ~3-minute window once the QR appears; if it lapses the step times out — just re-run it for a fresh code. (Slow to scan? Raise `SIGNAL_LINK_SCAN_TIMEOUT_MS`.)
 ```
 
 Run the device-link. It blocks until you scan, then reports the linked phone
@@ -269,8 +271,15 @@ optional — the defaults work for the device-link flow above.
 SIGNAL_TCP_HOST=127.0.0.1
 SIGNAL_TCP_PORT=7583
 
-# Path to the signal-cli binary (default: resolved on PATH)
+# Path to the signal-cli binary (default: $SIGNAL_CLI_PATH, else
+# ~/.local/bin/signal-cli if present, else resolved on PATH)
 SIGNAL_CLI_PATH=/usr/local/bin/signal-cli
+
+# Device-link timeouts (milliseconds). The scan window starts when the QR is
+# shown, so a slow signal-cli cold start no longer eats into it. Raise the scan
+# value if the operator needs longer to reach their phone.
+SIGNAL_LINK_SCAN_TIMEOUT_MS=180000
+SIGNAL_LINK_STARTUP_TIMEOUT_MS=90000
 
 # Whether NanoClaw manages the daemon lifecycle (default: true).
 # Set to false if you run signal-cli daemon externally.

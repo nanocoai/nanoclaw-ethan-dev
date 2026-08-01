@@ -35,10 +35,26 @@
  * Selecting a different existing account is a driver concern.
  */
 import { spawn, spawnSync } from 'child_process';
+import { existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 
 import { emitStatus } from './status.js';
 
-const LINK_TIMEOUT_MS = 180_000;
+/**
+ * How long the operator gets to scan, measured from the moment the QR is shown
+ * — NOT from spawn. signal-cli's native binary is page-cache-cold right after
+ * download and can take many seconds to print the linking URL; charging that
+ * cold start against the scan budget is what made valid scans time out.
+ */
+const LINK_SCAN_TIMEOUT_MS = Number(process.env.SIGNAL_LINK_SCAN_TIMEOUT_MS) || 180_000;
+/**
+ * Separate, generous budget for signal-cli to start and emit the linking URL.
+ * If it never prints one we fail with a distinct error instead of a scan
+ * timeout the operator can do nothing about.
+ */
+const LINK_STARTUP_TIMEOUT_MS =
+  Number(process.env.SIGNAL_LINK_STARTUP_TIMEOUT_MS) || 90_000;
 const DEFAULT_DEVICE_NAME = 'NanoClaw';
 
 interface SignalAccount {
@@ -47,8 +63,19 @@ interface SignalAccount {
   registered?: boolean;
 }
 
-function cliPath(): string {
-  return process.env.SIGNAL_CLI_PATH || 'signal-cli';
+/**
+ * Resolve the signal-cli binary. Honour SIGNAL_CLI_PATH first, then prefer the
+ * known install location `~/.local/bin/signal-cli`: install-signal-cli.sh puts
+ * it there, but a freshly spawned shell on Ubuntu/Pop only adds `~/.local/bin`
+ * to PATH at login, so the bare name would not resolve in the same setup run.
+ * Using the absolute path makes linking work without a re-login. Falls back to
+ * the bare name (found on PATH, e.g. the Homebrew install on macOS).
+ */
+export function cliPath(): string {
+  if (process.env.SIGNAL_CLI_PATH) return process.env.SIGNAL_CLI_PATH;
+  const local = join(homedir(), '.local', 'bin', 'signal-cli');
+  if (existsSync(local)) return local;
+  return 'signal-cli';
 }
 
 /**
@@ -73,6 +100,40 @@ function listAccounts(): string[] {
   }
 }
 
+// qrcode's small-terminal renderer wraps every row in white-background +
+// black-foreground SGR codes and gives the code only a one-module quiet zone.
+// The white background is the ONLY thing that keeps the code light-on-dark and
+// scannable, so if those codes are ever stripped the QR is unreadable, and one
+// module is below the four the QR spec wants. `margin` is ignored in small mode,
+// so we add the quiet zone ourselves in the same white-background style, keeping
+// it independent of the terminal's own background colour.
+const QR_BG = '\x1b[47m';
+const QR_FG = '\x1b[30m';
+const QR_RESET = '\x1b[0m';
+
+/**
+ * Surround a small-mode terminal QR with a white-background quiet zone (2 extra
+ * light columns each side plus the built-in one, and one light row top and
+ * bottom). Additive only — it never clears a dark module — and the result stays
+ * within 24 rows. If the rows are not in the expected white-background form
+ * (e.g. a future qrcode change), returns them untouched.
+ */
+export function withQuietZone(qrText: string): string[] {
+  const rows = qrText.replace(/\n+$/, '').split('\n');
+  if (rows.length === 0 || !rows[0].startsWith(QR_BG)) return rows;
+  const bodies = rows.map((r) =>
+    r.replace(new RegExp(`^${QR_BG.replace('[', '\\[')}${QR_FG.replace('[', '\\[')}`), '')
+      .replace(new RegExp(`${QR_RESET.replace('[', '\\[')}$`), ''),
+  );
+  const pad = '  ';
+  const blank = `${QR_BG}${' '.repeat(bodies[0].length + pad.length * 2)}${QR_RESET}`;
+  return [
+    blank,
+    ...bodies.map((b) => `${QR_BG}${QR_FG}${pad}${b}${pad}${QR_RESET}`),
+    blank,
+  ];
+}
+
 /**
  * Render the signal-cli linking URL as a block-art QR and print it — together
  * with the raw URL — as PLAIN stdout lines. A streaming parent tees these to the
@@ -88,7 +149,7 @@ async function renderQr(url: string): Promise<string[]> {
   try {
     const QRCode = await import('qrcode');
     const qrText = await QRCode.toString(url, { type: 'terminal', small: true });
-    return ['', ...qrText.trimEnd().split('\n'), '', scanHint, '', urlHint, url, ''];
+    return ['', ...withQuietZone(qrText), '', scanHint, '', urlHint, url, ''];
   } catch {
     return ['', urlHint, url, '', scanHint, ''];
   }
@@ -130,24 +191,39 @@ export async function run(_args: string[]): Promise<void> {
   await new Promise<void>((resolve) => {
     let settled = false;
     let qrEmitted = false;
+    let startupTimer: ReturnType<typeof setTimeout>;
+    let scanTimer: ReturnType<typeof setTimeout> | undefined;
 
     const finish = (block: Record<string, string | number | boolean>, code: number): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(startupTimer);
+      if (scanTimer) clearTimeout(scanTimer);
       emitStatus('SIGNAL_AUTH', block);
       resolve();
       setTimeout(() => process.exit(code), 500);
     };
 
-    const timer = setTimeout(() => {
+    const killLink = (): void => {
       try {
         child.kill('SIGTERM');
       } catch {
         /* ignore */
       }
-      finish({ STATUS: 'failed', ERROR: 'qr_timeout' }, 1);
-    }, LINK_TIMEOUT_MS);
+    };
+
+    // Cold-start guard: signal-cli hasn't printed a linking URL yet. This is
+    // NOT the operator's scanning budget — that starts only once the QR shows.
+    startupTimer = setTimeout(() => {
+      killLink();
+      finish(
+        {
+          STATUS: 'failed',
+          ERROR: 'signal-cli did not print a linking URL (startup timed out)',
+        },
+        1,
+      );
+    }, LINK_STARTUP_TIMEOUT_MS);
 
     const child = spawn(cli, ['link', '--name', DEFAULT_DEVICE_NAME], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -171,7 +247,14 @@ export async function run(_args: string[]): Promise<void> {
         // NANOCLAW SETUP block would be consumed, not shown).
         if (/^(sgnl|tsdevice):\/\/linkdevice\?/.test(line) && !qrEmitted) {
           qrEmitted = true;
+          // The QR is now on screen: stop the cold-start guard and begin the
+          // operator's scan budget here, so the full window is theirs to scan.
+          clearTimeout(startupTimer);
           printLink(line);
+          scanTimer = setTimeout(() => {
+            killLink();
+            finish({ STATUS: 'failed', ERROR: 'qr_timeout' }, 1);
+          }, LINK_SCAN_TIMEOUT_MS);
         }
       }
     };
