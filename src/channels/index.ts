@@ -7,3 +7,6 @@
 // self-registration import below.
 
 import './cli.js';
+
+// dial (native, no Chat SDK — @getdial/sdk outbound + CLI command-target inbound)
+import './dial.js';
