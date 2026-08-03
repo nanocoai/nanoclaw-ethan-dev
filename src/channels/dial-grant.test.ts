@@ -1,0 +1,42 @@
+/**
+ * Security regression: the Dial adapter's inbound pairing path must never grant
+ * a role. A matching 4-digit SMS proves the sender controls a phone, not that
+ * they are the operator, so the adapter only records the sender as a candidate —
+ * the operator-run setup wizard (setup/pair-dial.ts) is the sole owner-granting
+ * authority. Before the fix, `consumePairing` self-granted `owner` whenever the
+ * install had none, letting an inbound SMS take over the agent (see
+ * dial-e2e-findings 2026-08-03, finding 1).
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { closeDb, initTestDb, runMigrations } from '../db/index.js';
+import { getOwners, getUserRoles, hasAnyOwner } from '../modules/permissions/db/user-roles.js';
+import { getUser } from '../modules/permissions/db/users.js';
+import { recordPairingCandidate } from './dial.js';
+
+beforeEach(() => {
+  const db = initTestDb();
+  runMigrations(db);
+});
+
+afterEach(() => {
+  closeDb();
+});
+
+describe('dial adapter pairing — records candidate, grants no role', () => {
+  it('records the sender as a user but grants no role, even with no existing owner', () => {
+    expect(hasAnyOwner()).toBe(false);
+
+    const userId = recordPairingCandidate('+15551234567');
+    expect(userId).toBe('dial:+15551234567');
+
+    // Recorded as a user so the wizard can see who paired...
+    expect(getUser(userId)?.kind).toBe('dial');
+
+    // ...but with NO role, and the install still has no owner — the adapter
+    // never promotes.
+    expect(getUserRoles(userId)).toHaveLength(0);
+    expect(getOwners()).toHaveLength(0);
+    expect(hasAnyOwner()).toBe(false);
+  });
+});

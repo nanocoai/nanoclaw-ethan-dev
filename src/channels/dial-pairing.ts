@@ -3,10 +3,12 @@
  *
  * Setup mints a one-time 4-digit code; the operator texts exactly those 4
  * digits to the Dial number from the phone they want registered. The inbound
- * interceptor in dial.ts matches the code, records the sender's number, and
- * (if no owner exists yet) promotes them to owner — all before the message
- * reaches an agent. The message must be exactly the 4 digits; a text that
- * merely contains a 4-digit number does NOT match.
+ * interceptor in dial.ts matches the code and records the sender's number as a
+ * pairing candidate — before the message reaches an agent, and without granting
+ * any role. The operator-run setup wizard (setup/pair-dial.ts) observes the same
+ * consumed pairing and is the sole authority that grants the owner role. The
+ * message must be exactly the 4 digits; a text that merely contains a 4-digit
+ * number does NOT match.
  *
  * Storage is a JSON file at data/dial-pairings.json — single-process,
  * read-modify-write under an in-process mutex. Mirrors telegram-pairing.ts.

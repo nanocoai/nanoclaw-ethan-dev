@@ -15,9 +15,11 @@
  * correspondent is a THREAD inside it (threadId = their E.164). One wiring +
  * `unknown_sender_policy: 'public'` therefore lets anyone text/call the number
  * and reach the agent with no per-sender approval, while replies still route
- * to the right person via their thread. Ownership is bootstrapped by a pairing
- * code (see dial-pairing.ts): the operator texts a 4-digit code to the number,
- * the interceptor records their number as owner before it reaches an agent.
+ * to the right person via their thread. A pairing code (see dial-pairing.ts)
+ * only proves the operator controls a phone: the interceptor records the sender
+ * as a pairing CANDIDATE before the message reaches an agent, and nothing more.
+ * The owner role is granted solely by the operator-run setup wizard
+ * (setup/pair-dial.ts) — an inbound SMS is never trusted to grant itself a role.
  *
  * Unlike other channels one platform_id serves many correspondents, so the
  * line must be a group: per-thread sessions are what keep them apart.
@@ -40,8 +42,20 @@ import { getMessagingGroupsByChannel, updateMessagingGroup } from '../db/messagi
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import type { MessagingGroup, UnknownSenderPolicy } from '../types.js';
-import { getOwners, grantRole, hasAnyOwner } from '../modules/permissions/db/user-roles.js';
+import { getOwners } from '../modules/permissions/db/user-roles.js';
 import { upsertUser } from '../modules/permissions/db/users.js';
+
+/**
+ * Record a matched pairing sender as a candidate for ownership. This does NOT
+ * grant any role: an inbound SMS is not a trusted authority. The operator-run
+ * setup wizard (setup/pair-dial.ts) is the only path that grants owner, after
+ * it observes the same consumed pairing. Returns the recorded user id.
+ */
+export function recordPairingCandidate(fromNumber: string, at: string = new Date().toISOString()): string {
+  const userId = `dial:${fromNumber}`;
+  upsertUser({ id: userId, kind: 'dial', display_name: null, created_at: at });
+  return userId;
+}
 
 /** Longest SMS body sent in one shot; longer text is chunked. */
 const MAX_CHUNK = 1500;
@@ -160,9 +174,10 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
 
   /**
    * Pairing interceptor: if an inbound SMS body is exactly a pending 4-digit
-   * code, consume it — record the sender's number, promote to owner if the
-   * install has none yet, confirm by SMS — and swallow the message so it never
-   * reaches an agent. Returns true when consumed.
+   * code, consume it — record the sender's number as a pairing candidate (owner
+   * is granted only by the setup wizard, never from an inbound SMS), confirm by
+   * SMS — and swallow the message so it never reaches an agent. Returns true
+   * when consumed.
    */
   async function consumePairing(fromNumber: string, text: string, viaLine: string): Promise<boolean> {
     let consumed;
@@ -174,15 +189,11 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
     }
     if (!consumed) return false;
 
-    const now = new Date().toISOString();
-    const userId = `dial:${fromNumber}`;
-    upsertUser({ id: userId, kind: 'dial', display_name: null, created_at: now });
-    let promoted = false;
-    if (!hasAnyOwner()) {
-      grantRole({ user_id: userId, role: 'owner', agent_group_id: null, granted_by: null, granted_at: now });
-      promoted = true;
-    }
-    log.info('Dial pairing accepted', { fromNumber, promotedToOwner: promoted });
+    recordPairingCandidate(fromNumber);
+    log.info('Dial: pairing code matched, recorded candidate — owner grant deferred to setup', {
+      fromNumber,
+      promotedToOwner: false,
+    });
     try {
       await sendSms(fromNumber, 'Paired ✅ — your NanoClaw assistant is set up. Text me anytime.', viaLine);
     } catch (err) {

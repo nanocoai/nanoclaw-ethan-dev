@@ -26,8 +26,34 @@ import { createPairing, waitForPairing } from '../src/channels/dial-pairing.js';
 import { DATA_DIR } from '../src/config.js';
 import { initDb } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/migrations/index.js';
+import { grantRole, hasAnyOwner } from '../src/modules/permissions/db/user-roles.js';
+import { upsertUser } from '../src/modules/permissions/db/users.js';
 
 import { emitStatus } from './status.js';
+
+/**
+ * Grant the owner role to the paired number. This is the trusted grant: it runs
+ * inside the operator-run wizard, not from an inbound SMS. Grants at most one
+ * owner for the install — if an owner already exists it grants nothing and
+ * reports that, so a second paired phone can never silently take ownership.
+ * `granted_by` carries the wizard's provenance rather than a self-grant's null.
+ */
+/** Provenance principal for the wizard's grant (user_roles.granted_by has an FK). */
+const WIZARD_PRINCIPAL = 'setup:pair-dial';
+
+export function grantOwnerFromPairing(
+  pairedNumber: string,
+  at: string = new Date().toISOString(),
+): { granted: boolean; userId: string } {
+  const userId = `dial:${pairedNumber}`;
+  if (hasAnyOwner()) return { granted: false, userId };
+  // granted_by carries a real principal (the wizard) so provenance is non-null,
+  // which the user_roles FK requires — seed that principal before the grant.
+  upsertUser({ id: WIZARD_PRINCIPAL, kind: 'system', display_name: 'setup: pair-dial', created_at: at });
+  upsertUser({ id: userId, kind: 'dial', display_name: null, created_at: at });
+  grantRole({ user_id: userId, role: 'owner', agent_group_id: null, granted_by: WIZARD_PRINCIPAL, granted_at: at });
+  return { granted: true, userId };
+}
 
 const PAIR_TIMEOUT_MS = 5 * 60_000;
 
@@ -110,6 +136,16 @@ export async function run(args: string[]): Promise<void> {
     if (!from) throw new Error('paired but no number recorded');
 
     p.log.success(`Paired with ${from}.`);
+
+    // The wizard is the trusted authority for the owner grant — the adapter's
+    // inbound handler only records the candidate. Grant here, at most one owner.
+    const grant = grantOwnerFromPairing(from);
+    if (grant.granted) {
+      p.log.success(`Granted owner to ${from}.`);
+    } else {
+      p.log.warn(`An owner already exists — leaving ownership unchanged (not granting ${from}).`);
+    }
+
     emitStatus('PAIR_DIAL', {
       STATUS: 'success',
       // Bare E.164 line number — the public line's platform_id. The driver
