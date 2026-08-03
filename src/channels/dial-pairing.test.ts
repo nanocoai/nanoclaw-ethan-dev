@@ -1,6 +1,8 @@
 /**
- * Unit tests for the Dial pairing store — the code-mint / match / supersede
- * logic that backs the wizard's pairing step and the adapter's interceptor.
+ * Unit tests for the Dial pairing store — code-mint / match / supersede logic,
+ * plus the two hardening layers: 6-digit crypto codes with a TTL (expired codes
+ * never consume) and a per-line guess rate limit (K wrong codes locks the line;
+ * a correct code is refused while locked; a success resets the counter).
  * No DB or network: it's a JSON file under a temp path.
  */
 import fs from 'node:fs';
@@ -14,57 +16,173 @@ import {
   _setStorePathForTest,
   createPairing,
   extractCode,
+  getPairing,
   tryConsume,
   waitForPairing,
 } from './dial-pairing.js';
 
 let dir: string;
+let storeFile: string;
+const savedEnv: Record<string, string | undefined> = {};
+const ENV_KEYS = [
+  'DIAL_PAIRING_TTL_MS',
+  'DIAL_PAIRING_MAX_ATTEMPTS',
+  'DIAL_PAIRING_ATTEMPT_WINDOW_MS',
+  'DIAL_PAIRING_COOLDOWN_MS',
+];
+
+const LINE = '+13165550000';
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dial-pairing-'));
-  _setStorePathForTest(path.join(dir, 'dial-pairings.json'));
+  storeFile = path.join(dir, 'dial-pairings.json');
+  _setStorePathForTest(storeFile);
+  for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
 });
 afterEach(() => {
   _resetForTest();
   _setStorePathForTest(null);
+  for (const k of ENV_KEYS) {
+    if (savedEnv[k] === undefined) delete process.env[k];
+    else process.env[k] = savedEnv[k];
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/** A 6-digit code guaranteed different from `real`. */
+function wrongCode(real: string): string {
+  const alt = real === '000000' ? '111111' : '000000';
+  return alt;
+}
+/** Read/patch/write the store file directly (to simulate elapsed time). */
+function patchStore(mutate: (s: { pairings: Array<Record<string, unknown>>; lines?: Record<string, { failures: number; windowStart: string; lockedUntil?: string }> }) => void): void {
+  const s = JSON.parse(fs.readFileSync(storeFile, 'utf8'));
+  mutate(s);
+  fs.writeFileSync(storeFile, JSON.stringify(s, null, 2));
+}
+const consume = (text: string, opts: { line?: string; from?: string } = {}) =>
+  tryConsume({ text, fromNumber: opts.from ?? '+15551230000', viaLine: opts.line ?? LINE });
+
 describe('extractCode', () => {
-  it('accepts a bare 4-digit body only', () => {
-    expect(extractCode('1234')).toBe('1234');
-    expect(extractCode('  4321 ')).toBe('4321');
-    expect(extractCode('my code is 1234')).toBeNull();
-    expect(extractCode('12345')).toBeNull();
+  it('accepts a bare 6-digit body only', () => {
+    expect(extractCode('123456')).toBe('123456');
+    expect(extractCode('  654321 ')).toBe('654321');
+    expect(extractCode('my code is 123456')).toBeNull();
+    expect(extractCode('1234')).toBeNull(); // old 4-digit length no longer matches
+    expect(extractCode('1234567')).toBeNull();
     expect(extractCode('hello')).toBeNull();
   });
 });
 
 describe('createPairing / tryConsume', () => {
-  it('mints a 4-digit code and consumes it on an exact match', async () => {
+  it('mints a 6-digit code and consumes it on an exact match', async () => {
     const rec = await createPairing();
-    expect(rec.code).toMatch(/^\d{4}$/);
+    expect(rec.code).toMatch(/^\d{6}$/);
     expect(rec.status).toBe('pending');
+    expect(Date.parse(rec.expiresAt)).toBeGreaterThan(Date.parse(rec.createdAt));
 
-    const consumed = await tryConsume({ text: rec.code, fromNumber: '+15551230000' });
-    expect(consumed?.status).toBe('consumed');
-    expect(consumed?.consumed?.fromNumber).toBe('+15551230000');
+    const res = await consume(rec.code, { from: '+15551230000' });
+    expect(res.record?.status).toBe('consumed');
+    expect(res.record?.consumed?.fromNumber).toBe('+15551230000');
+    expect(res.rateLimited).toBe(false);
   });
 
   it('does not consume a non-matching body', async () => {
     const rec = await createPairing();
-    expect(await tryConsume({ text: 'not a code', fromNumber: '+1555' })).toBeNull();
-    expect(await tryConsume({ text: '9999', fromNumber: '+1555' })).toBeNull(); // wrong 4 digits (assuming != rec.code)
+    expect((await consume('not a code')).record).toBeNull();
+    expect((await consume(wrongCode(rec.code))).record).toBeNull();
     // The real code still works afterward.
-    expect((await tryConsume({ text: rec.code, fromNumber: '+1555' }))?.status).toBe('consumed');
+    expect((await consume(rec.code)).record?.status).toBe('consumed');
   });
 
   it('supersedes a prior pending code', async () => {
     const first = await createPairing();
     const second = await createPairing();
     expect(second.code).not.toBe(first.code);
-    // The old code no longer matches (invalidated).
-    expect(await tryConsume({ text: first.code, fromNumber: '+1555' })).toBeNull();
-    expect((await tryConsume({ text: second.code, fromNumber: '+1555' }))?.status).toBe('consumed');
+    expect((await consume(first.code)).record).toBeNull(); // invalidated
+    expect((await consume(second.code)).record?.status).toBe('consumed');
+  });
+});
+
+describe('expiry', () => {
+  it('does not consume a code past its expiresAt, and sweep invalidates it', async () => {
+    const rec = await createPairing();
+    // Simulate the TTL having elapsed by backdating the record's expiry.
+    patchStore((s) => {
+      for (const r of s.pairings) r.expiresAt = new Date(Date.now() - 1000).toISOString();
+    });
+
+    const res = await consume(rec.code);
+    expect(res.record).toBeNull();
+    // The sweep inside tryConsume flipped the stale pending record to invalidated.
+    expect(getPairing(rec.code)?.status).toBe('invalidated');
+  });
+
+  it('waitForPairing rejects once the code expires', async () => {
+    process.env.DIAL_PAIRING_TTL_MS = '40';
+    const rec = await createPairing();
+    await expect(waitForPairing(rec.code, 10)).rejects.toThrow(/expired/);
+  });
+});
+
+describe('rate limiting', () => {
+  it('locks a line after K wrong codes and refuses even a correct one', async () => {
+    process.env.DIAL_PAIRING_MAX_ATTEMPTS = '3';
+    process.env.DIAL_PAIRING_ATTEMPT_WINDOW_MS = String(10 * 60_000);
+    process.env.DIAL_PAIRING_COOLDOWN_MS = String(15 * 60_000);
+
+    const rec = await createPairing();
+    const bad = wrongCode(rec.code);
+
+    // Two wrong guesses: not yet locked.
+    expect((await consume(bad)).rateLimited).toBe(false);
+    expect((await consume(bad)).rateLimited).toBe(false);
+    // Third wrong guess trips the lock.
+    expect((await consume(bad)).rateLimited).toBe(true);
+
+    // Correct code while locked is refused, not consumed.
+    const locked = await consume(rec.code);
+    expect(locked.record).toBeNull();
+    expect(locked.rateLimited).toBe(true);
+
+    // A different line is unaffected by this line's lock.
+    const other = await consume(rec.code, { line: '+13165559999' });
+    expect(other.record?.status).toBe('consumed');
+  });
+
+  it('consumes again after the cooldown lifts', async () => {
+    process.env.DIAL_PAIRING_MAX_ATTEMPTS = '2';
+    process.env.DIAL_PAIRING_ATTEMPT_WINDOW_MS = String(10 * 60_000);
+    process.env.DIAL_PAIRING_COOLDOWN_MS = String(15 * 60_000);
+
+    const rec = await createPairing();
+    const bad = wrongCode(rec.code);
+    await consume(bad);
+    expect((await consume(bad)).rateLimited).toBe(true); // locked
+
+    // Simulate the cooldown having elapsed.
+    patchStore((s) => {
+      if (s.lines) for (const st of Object.values(s.lines)) st.lockedUntil = new Date(Date.now() - 1000).toISOString();
+    });
+
+    const res = await consume(rec.code);
+    expect(res.record?.status).toBe('consumed');
+    expect(res.rateLimited).toBe(false);
+  });
+
+  it('resets the line counter after a successful pair', async () => {
+    process.env.DIAL_PAIRING_MAX_ATTEMPTS = '3';
+
+    const first = await createPairing();
+    await consume(wrongCode(first.code)); // 1 failure
+    await consume(wrongCode(first.code)); // 2 failures
+    expect((await consume(first.code)).record?.status).toBe('consumed'); // success resets
+
+    // A fresh code: the previous two failures are gone, so two more wrong
+    // guesses do NOT lock (would have on the 3rd if the counter had carried).
+    const second = await createPairing();
+    expect((await consume(wrongCode(second.code))).rateLimited).toBe(false);
+    expect((await consume(wrongCode(second.code))).rateLimited).toBe(false);
   });
 });
 
@@ -72,7 +190,7 @@ describe('waitForPairing', () => {
   it('resolves once the code is consumed', async () => {
     const rec = await createPairing();
     const waiting = waitForPairing(rec.code, 20);
-    await tryConsume({ text: rec.code, fromNumber: '+15559998888' });
+    await consume(rec.code, { from: '+15559998888' });
     const resolved = await waiting;
     expect(resolved.consumed?.fromNumber).toBe('+15559998888');
   });

@@ -1,6 +1,6 @@
 /**
  * Security regression: the Dial adapter's inbound pairing path must never grant
- * a role. A matching 4-digit SMS proves the sender controls a phone, not that
+ * a role. A matching 6-digit SMS proves the sender controls a phone, not that
  * they are the operator, so the adapter only records the sender as a candidate —
  * the operator-run setup wizard (setup/pair-dial.ts) is the sole owner-granting
  * authority. Before the fix, `consumePairing` self-granted `owner` whenever the

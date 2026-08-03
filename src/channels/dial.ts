@@ -173,21 +173,26 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   }
 
   /**
-   * Pairing interceptor: if an inbound SMS body is exactly a pending 4-digit
+   * Pairing interceptor: if an inbound SMS body is exactly a pending 6-digit
    * code, consume it — record the sender's number as a pairing candidate (owner
    * is granted only by the setup wizard, never from an inbound SMS), confirm by
    * SMS — and swallow the message so it never reaches an agent. Returns true
-   * when consumed.
+   * when consumed. Wrong codes are rate-limited per line; while a line is locked
+   * even a correct code is refused and the message falls through to the normal
+   * sender-policy path (dropped for unknown senders).
    */
   async function consumePairing(fromNumber: string, text: string, viaLine: string): Promise<boolean> {
-    let consumed;
+    let result;
     try {
-      consumed = await tryConsume({ text, fromNumber });
+      result = await tryConsume({ text, fromNumber, viaLine });
     } catch (err) {
       log.warn('Dial: pairing consume failed', { err });
       return false;
     }
-    if (!consumed) return false;
+    if (result.rateLimited) {
+      log.warn('Dial: pairing attempts rate-limited for line', { line: viaLine });
+    }
+    if (!result.record) return false;
 
     recordPairingCandidate(fromNumber);
     log.info('Dial: pairing code matched, recorded candidate — owner grant deferred to setup', {
