@@ -4,8 +4,7 @@
  * they are the operator, so the adapter only records the sender as a candidate —
  * the operator-run setup wizard (setup/pair-dial.ts) is the sole owner-granting
  * authority. Before the fix, `consumePairing` self-granted `owner` whenever the
- * install had none, letting an inbound SMS take over the agent (see
- * dial-e2e-findings 2026-08-03, finding 1).
+ * install had none, letting an inbound SMS take over the agent.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
