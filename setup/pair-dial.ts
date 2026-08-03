@@ -1,5 +1,5 @@
 /**
- * Step: pair-dial — issue a one-time 4-digit pairing code and wait for the
+ * Step: pair-dial — issue a one-time 6-digit pairing code and wait for the
  * operator to text it to the Dial number from the phone they want registered,
  * proving ownership before the line is wired.
  *
@@ -103,7 +103,7 @@ async function printCodeCard(code: string, lineNumber: string | null): Promise<v
       [
         `   ${code.split('').join('  ')}`,
         '',
-        `From the phone you want to use, text only these 4 digits to ${target}.`,
+        `From the phone you want to use, text only these 6 digits to ${target}.`,
         'This proves the number is yours; you become the owner.',
       ].join('\n'),
       'Pairing code',

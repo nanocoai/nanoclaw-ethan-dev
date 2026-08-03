@@ -225,12 +225,12 @@ dial local-target add cmd "$PWD/data/dial/handle-dial-event.sh" || true
 ## Pair your phone
 
 Dial account auth carries no per-sender binding, so the agent proves you own the
-phone you'll text from with a one-time pairing handshake: it issues a 4-digit
-code, you text those exact 4 digits to the Dial line, and the live adapter
+phone you'll text from with a one-time pairing handshake: it issues a 6-digit
+code, you text those exact 6 digits to the Dial line, and the live adapter
 matches them. Tell the user:
 
 ```nc:operator
-A 4-digit pairing code (and a scannable QR) is about to appear in this terminal. From the phone you want to use, text just those 4 digits to your Dial line {{platform_id}} — or scan the QR, which opens Messages pre-filled so you just press Send.
+A 6-digit pairing code (and a scannable QR) is about to appear in this terminal. From the phone you want to use, text just those 6 digits to your Dial line {{platform_id}} — or scan the QR, which opens Messages pre-filled so you just press Send.
 ```
 
 Run the pairing handshake. It prints the code/QR, streams "waiting…" while it
@@ -285,7 +285,7 @@ Dial number later, see the `/add-dial-number` skill.
 - **type**: `dial`
 - **terminology**: Dial calls it a "number" or "line." One number is a single threaded line — each texter/caller gets their own thread.
 - **platform-id-format**: the bare E.164 number (e.g. `+14155550123`) — unlike prefixed channels, the number itself is the id.
-- **how-to-find-id**: Do NOT ask the user for an id. Dial registration uses pairing — run `pnpm exec tsx setup/index.ts --step pair-dial -- --line <E.164>`. The step prints a 4-digit code + QR; tell the user to text just those 4 digits to the Dial line. Success emits a `PAIR_DIAL` block with `STATUS=success`, `PLATFORM_ID` (the bare line), and `PAIRED_NUMBER` (the bare sender E.164). The service must be running — the adapter is what observes the code.
+- **how-to-find-id**: Do NOT ask the user for an id. Dial registration uses pairing — run `pnpm exec tsx setup/index.ts --step pair-dial -- --line <E.164>`. The step prints a 6-digit code + QR; tell the user to text just those 6 digits to the Dial line. Success emits a `PAIR_DIAL` block with `STATUS=success`, `PLATFORM_ID` (the bare line), and `PAIRED_NUMBER` (the bare sender E.164). The service must be running — the adapter is what observes the code.
 - **supports-threads**: yes (each correspondent is a thread on the line, with its own session)
 - **typical-use**: A real phone number for SMS and AI-handled voice calls — receptionist, notifications, 2FA relay.
 - **default-isolation**: One line → one agent group. Who may reach it is the operator's choice at setup (`inbound_access`): `owner` admits only the paired phone, `public` admits everyone. Defaults to owner-only.
@@ -298,6 +298,6 @@ Dial number later, see the `/add-dial-number` skill.
 
 **Inbound texts/calls don't reach the agent.** `dial listen install` needs a user-service supervisor (launchd/systemd `--user`); sandboxes/CI don't have one. Outbound still works. Start it manually with `dial listen install` once a supervisor is available, and confirm the command target with `dial local-target list`.
 
-**Pairing never completes.** The live adapter observes the code, so the service must be running — the restart step comes before pairing for exactly this reason. Text *just* the 4 digits to the Dial line; a wrong message is ignored. If it times out (5 min), re-run this step for a fresh code.
+**Pairing never completes.** The live adapter observes the code, so the service must be running — the restart step comes before pairing for exactly this reason. Text *just* the 6 digits to the Dial line; a wrong message is ignored. If it times out (5 min), re-run this step for a fresh code.
 
 **Everything green but no replies.** Run `pnpm exec vitest run src/channels/dial-registration.test.ts` — red means the barrel import or the `@getdial/sdk` install drifted, so re-run the Apply steps. If green, restart again (`bash setup/lib/restart.sh`) and check `logs/nanoclaw.error.log`.
