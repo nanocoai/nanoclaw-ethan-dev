@@ -91,44 +91,31 @@ onecli agents list
 ### Check if already applied
 
 ```bash
-grep -q 'CALENDAR_MCP_VERSION' container/Dockerfile && \
+grep -q '"@cocal/google-calendar-mcp"' container/cli-tools.json && \
 echo "ALREADY APPLIED — skip to Phase 3"
 ```
 
-### Add MCP server to Dockerfile
+### Add the Calendar CLI to the container manifest
 
-Edit `container/Dockerfile`. Find the pinned-version ARG block and add:
+Add this entry to `container/cli-tools.json`, keyed by `name`. Keep the existing
+entries; skip it if already present.
 
-```dockerfile
-ARG CALENDAR_MCP_VERSION=2.6.1
+```json
+{ "name": "@cocal/google-calendar-mcp", "version": "2.6.1" }
 ```
 
-If `/add-gmail-tool` has already been applied, the pnpm global-install block already exists with its `zod-to-json-schema@3.22.5` pin. Just append the calendar package — **the calendar-mcp uses `zod@4.x` and does NOT need that pin**, but it's harmless to share the block:
-
-```dockerfile
-RUN --mount=type=cache,target=/root/.cache/pnpm \
-    pnpm install -g \
-        "@gongrzhe/server-gmail-autoauth-mcp@${GMAIL_MCP_VERSION}" \
-        "@cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION}" \
-        "zod-to-json-schema@3.22.5"
-```
-
-If `/add-gmail-tool` hasn't been applied, install Calendar standalone:
-
-```dockerfile
-RUN --mount=type=cache,target=/root/.cache/pnpm \
-    pnpm install -g "@cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION}"
-```
+The image's existing `install-cli-tools.sh` installs every manifest entry through
+pnpm. Calendar uses `zod@4.x` and does not need Gmail's compatibility pin.
 
 `container/agent-runner/src/providers/claude.ts` derives the allow-pattern dynamically from each group's `mcpServers` map (`Object.keys(this.mcpServers).map(mcpAllowPattern)`), so registering `calendar` in Phase 3 automatically allows `mcp__calendar__*`.
 
 ### Install the dependency-guard test
 
-`@cocal/google-calendar-mcp` is a stdio CLI installed in the image, not an imported module, so `tsc` and the runtime tests never reference it — only the Dockerfile edit above proves it is present. Copy the guard test into the host test tree (vitest) so the Dockerfile `ARG` + install line stay covered:
+`@cocal/google-calendar-mcp` is a stdio CLI installed in the image, not an imported module, so `tsc` and runtime imports cannot guard it. Copy the manifest guard into the host test tree:
 
 ```bash
-cp .claude/skills/add-gcal-tool/gcal-dockerfile.test.ts src/gcal-dockerfile.test.ts
-pnpm exec vitest run src/gcal-dockerfile.test.ts
+cp .claude/skills/add-gcal-tool/gcal-manifest.test.ts src/gcal-manifest.test.ts
+pnpm exec vitest run src/gcal-manifest.test.ts
 ```
 
 `cp` overwrites in place, so re-running this skill is safe.
@@ -214,6 +201,7 @@ tail -100 logs/nanoclaw.log | grep -iE 'calendar|mcp'
 ```
 
 Common signals:
+
 - `command not found: google-calendar-mcp` → image not rebuilt.
 - `ENOENT ...credentials.json` → mount missing. Check the mount allowlist.
 - `401 Unauthorized` from `*.googleapis.com` → OneCLI isn't injecting; verify agent's secret mode and that Google Calendar is connected.

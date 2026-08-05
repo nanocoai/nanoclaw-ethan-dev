@@ -24,12 +24,13 @@ ncl groups config remove-mount \
 ## 3. Delete the copied test file
 
 ```bash
-rm -f src/gcal-dockerfile.test.ts
+rm -f src/gcal-manifest.test.ts
 ```
 
-## 4. Revert the Dockerfile edits
+## 4. Remove the CLI manifest entry
 
-Remove the `ARG CALENDAR_MCP_VERSION=...` line and the `@cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION}` entry from the pnpm global-install block in `container/Dockerfile`. If Calendar shared the gmail install block, leave the gmail entry intact; if it had a standalone `RUN ... pnpm install -g "@cocal/google-calendar-mcp@..."` block, delete that whole `RUN` line.
+Remove the `@cocal/google-calendar-mcp` entry from `container/cli-tools.json`.
+Leave every other tool untouched.
 
 ## 5. Rebuild and restart
 
@@ -62,5 +63,5 @@ onecli apps disconnect --provider google-calendar
 After removal, in a wired agent asking it to "list my calendars" should report no calendar tool, and the dependency-guard test is gone:
 
 ```bash
-ls src/gcal-dockerfile.test.ts 2>&1   # No such file or directory
+ls src/gcal-manifest.test.ts 2>&1   # No such file or directory
 ```
