@@ -97,52 +97,42 @@ onecli agents secrets --id <agent-id>
 ### Check if already applied
 
 ```bash
-grep -q 'GMAIL_MCP_VERSION' container/Dockerfile && \
+grep -q '"@gongrzhe/server-gmail-autoauth-mcp"' container/cli-tools.json && \
 echo "ALREADY APPLIED — skip to Phase 3"
 ```
 
-### Copy the skill's tests into the container tree
+### Copy the skill's tests
 
-Both integration points this skill relies on live in the container (Bun) tree — the Dockerfile package install and the dynamic allow-pattern derivation in `claude.ts` — so the guards go there. `cp` overwrites, so re-running is safe.
+The CLI manifest guard runs under host Vitest. The allow-pattern guard runs in
+the container's Bun tree beside `claude.ts`. `cp` overwrites, so re-running is
+safe.
 
 ```bash
 S=.claude/skills/add-gmail-tool
-cp $S/gmail-dockerfile.test.ts    container/agent-runner/src/providers/gmail-dockerfile.test.ts
+cp $S/gmail-manifest.test.ts      src/gmail-manifest.test.ts
 cp $S/gmail-allow-pattern.test.ts container/agent-runner/src/providers/gmail-allow-pattern.test.ts
 ```
 
-- `gmail-dockerfile.test.ts` asserts the `GMAIL_MCP_VERSION` ARG and the pinned `pnpm install -g` line are present — the `gmail-mcp` binary is a Dockerfile-installed CLI, not importable or typed, so this structural guard is what goes red if the install is dropped.
+- `gmail-manifest.test.ts` asserts the Gmail CLI and its compatibility workaround stay pinned in `container/cli-tools.json`.
 - `gmail-allow-pattern.test.ts` asserts `claude.ts` still spreads `Object.keys(this.mcpServers).map(mcpAllowPattern)` into `allowedTools` — the derivation that makes registering `gmail` (Phase 3) enough to expose `mcp__gmail__*`.
 
-### Add MCP server to Dockerfile
+### Add the Gmail CLI to the container manifest
 
-Edit `container/Dockerfile`. Find the pinned-version ARG block:
+Add these two entries to `container/cli-tools.json`, keyed by `name`. Keep the
+existing entries; skip either entry if it is already present.
 
-```dockerfile
-ARG CLAUDE_CODE_VERSION=2.1.154
-ARG AGENT_BROWSER_VERSION=latest
-ARG VERCEL_VERSION=52.2.1
-ARG BUN_VERSION=1.3.12
+```json
+{ "name": "@gongrzhe/server-gmail-autoauth-mcp", "version": "1.1.11" }
 ```
 
-Add a new line:
-
-```dockerfile
-ARG GMAIL_MCP_VERSION=1.1.11
+```json
+{ "name": "zod-to-json-schema", "version": "3.22.5" }
 ```
 
-Then find the last pnpm global-install `RUN` block (the one that installs `@anthropic-ai/claude-code`) and add a new block directly after it (before the `# ---- ncl CLI wrapper` section):
+The image's existing `install-cli-tools.sh` installs every manifest entry through
+pnpm. Exact versions preserve the repository's supply-chain policy.
 
-```dockerfile
-RUN --mount=type=cache,target=/root/.cache/pnpm \
-    pnpm install -g \
-        "@gongrzhe/server-gmail-autoauth-mcp@${GMAIL_MCP_VERSION}" \
-        "zod-to-json-schema@3.22.5"
-```
-
-Pinned version matters — `minimumReleaseAge` in `pnpm-workspace.yaml` gates trunk installs, and CLAUDE.md requires a fixed ARG version for all Node CLIs installed into the image.
-
-**Why the `zod-to-json-schema` pin:** `@gongrzhe/server-gmail-autoauth-mcp@1.1.11` has loose deps (`zod-to-json-schema: ^3.22.1`, `zod: ^3.22.4`). pnpm resolves `zod-to-json-schema` to the latest 3.25.x, which imports `zod/v3` — a subpath that only exists in `zod>=3.25`. But `zod` resolves to `3.24.x` (highest satisfying `^3.22.4` without breaking peer ranges). Result: `ERR_PACKAGE_PATH_NOT_EXPORTED` at import time. Pinning `zod-to-json-schema` to a pre-v3-subpath version avoids it. Re-check if you bump `GMAIL_MCP_VERSION`.
+**Why the `zod-to-json-schema` pin:** `@gongrzhe/server-gmail-autoauth-mcp@1.1.11` has loose deps (`zod-to-json-schema: ^3.22.1`, `zod: ^3.22.4`). pnpm resolves `zod-to-json-schema` to the latest 3.25.x, which imports `zod/v3` — a subpath that only exists in `zod>=3.25`. But `zod` resolves to `3.24.x` (highest satisfying `^3.22.4` without breaking peer ranges). Result: `ERR_PACKAGE_PATH_NOT_EXPORTED` at import time. Pinning `zod-to-json-schema` to a pre-v3-subpath version avoids it. Re-check if you bump the Gmail MCP manifest version.
 
 The Gmail allow-pattern is derived automatically. `container/agent-runner/src/providers/claude.ts` builds `allowedTools` from each group's `mcpServers` map (`Object.keys(this.mcpServers).map(mcpAllowPattern)`), so registering `gmail` in Phase 3 exposes `mcp__gmail__*` to the agent.
 
@@ -152,7 +142,7 @@ The Gmail allow-pattern is derived automatically. `container/agent-runner/src/pr
 ./container/build.sh
 ```
 
-Must complete cleanly. The new `pnpm install -g` layer is ~60s first time (cached on rebuild).
+Must complete cleanly. The new global packages are cached on rebuild.
 
 ## Phase 3: Wire Per-Agent-Group
 
@@ -201,10 +191,11 @@ ncl groups config add-mount \
 ```bash
 pnpm run build
 pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
-(cd container/agent-runner && bun test src/providers/gmail-dockerfile.test.ts src/providers/gmail-allow-pattern.test.ts)
+pnpm exec vitest run src/gmail-manifest.test.ts
+(cd container/agent-runner && bun test src/providers/gmail-allow-pattern.test.ts)
 ```
 
-All must be clean before proceeding. `gmail-dockerfile.test.ts` confirms the package install is wired into the image; `gmail-allow-pattern.test.ts` confirms the allow-pattern derivation that exposes `mcp__gmail__*`. A failure means one drifted.
+All must be clean before proceeding. `gmail-manifest.test.ts` confirms the package install is wired into the image; `gmail-allow-pattern.test.ts` confirms the allow-pattern derivation that exposes `mcp__gmail__*`. A failure means one drifted.
 
 Run from your NanoClaw project root:
 

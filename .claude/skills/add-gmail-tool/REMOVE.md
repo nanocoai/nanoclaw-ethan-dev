@@ -5,7 +5,7 @@ Idempotent — safe to run even if some steps were never applied.
 ## 1. Delete the copied tests
 
 ```bash
-rm -f container/agent-runner/src/providers/gmail-dockerfile.test.ts \
+rm -f src/gmail-manifest.test.ts \
       container/agent-runner/src/providers/gmail-allow-pattern.test.ts
 ```
 
@@ -30,9 +30,10 @@ ncl groups config remove-mount \
 
 The verb is idempotent — a no-op if the mount is already absent.
 
-## 4. Remove the Dockerfile install
+## 4. Remove the CLI manifest entries
 
-In `container/Dockerfile`, delete the `ARG GMAIL_MCP_VERSION=...` line and the `pnpm install -g` `RUN` block that installs `@gongrzhe/server-gmail-autoauth-mcp` and `zod-to-json-schema`.
+Remove the `@gongrzhe/server-gmail-autoauth-mcp` and `zod-to-json-schema`
+entries from `container/cli-tools.json`. Leave every other tool untouched.
 
 ## 5. Rebuild and restart
 
