@@ -66,11 +66,11 @@ Remember the approach, not the instance. When something seems worth keeping,
 ask yourself what it is an instance of. If the user disliked the wording of one
 post, the durable fact is probably a style preference, not that post; when it
 matters and you are unsure, ask the user which it is. Store the specific only
-when the fact itself is specific ("the user's name is Bob").
+when the fact itself is specific ("the user's timezone is UTC+2").
 
 Think in entities. People, projects, teams, places, decisions: things that
-recur deserve their own concept, with relationships recorded ("Dana
-leads the Atlas project"). Make sure to link relevant concepts.
+recur deserve their own concept, with relationships recorded ("the frontend team
+owns the Atlas project"). Make sure to link relevant concepts.
 
 ## Where it goes
 
