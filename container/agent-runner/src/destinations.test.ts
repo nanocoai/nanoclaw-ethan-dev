@@ -73,4 +73,17 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', () 
     expect(prompt).not.toContain('<message to=');
     expect(prompt).not.toContain('default to addressing');
   });
+
+  it('uses a role-based example, never a personal name, in the routing guidance', () => {
+    seedDestination('team-chat', 'team-chat', 'whatsapp', 'group-1@g.us');
+    seedDestination('worker-1', 'worker-1', 'whatsapp', 'phone-2@s.whatsapp.net');
+
+    const prompt = buildSystemPromptAddendum('Assistant');
+
+    // Models treat prompt examples as facts about the people around them: a
+    // personal name in the example can resurface as a claimed user identity.
+    // Example destinations stay role-based ("family", "worker-1").
+    expect(prompt).toContain('"tell family that');
+    expect(prompt).not.toMatch(/\bLaura\b/i);
+  });
 });
