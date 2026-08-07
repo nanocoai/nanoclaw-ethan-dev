@@ -59,8 +59,8 @@ class FakeMqttClient extends EventEmitter {
     this.emit('error', error);
   }
 
-  receive(topic: string, payload: unknown): void {
-    this.emit('message', topic, Buffer.from(JSON.stringify(payload)));
+  receive(topic: string, payload: unknown, options: { retain?: boolean } = {}): void {
+    this.emit('message', topic, Buffer.from(JSON.stringify(payload)), { retain: options.retain ?? false });
   }
 }
 
@@ -267,6 +267,42 @@ describe('MQTT channel adapter', () => {
     });
   });
 
+  it('scopes duplicate ids to the publishing device', async () => {
+    const harness = createHarness(new Set(['pi-voice', 'kitchen-panel']));
+    await startHarness(harness);
+    const messageId = 'shared-device-local-id';
+
+    harness.client.receive('nanoclaw/v1/devices/pi-voice/in', utterance({ msg_id: messageId }));
+    harness.client.receive(
+      'nanoclaw/v1/devices/kitchen-panel/in',
+      utterance({ device_id: 'kitchen-panel', msg_id: messageId }),
+    );
+
+    await vi.waitFor(() => expect(harness.inbound).toHaveLength(2));
+    expect(harness.inbound.map((item) => item.platformId)).toEqual(['mqtt:pi-voice@local', 'mqtt:kitchen-panel@local']);
+
+    harness.client.receive('nanoclaw/v1/devices/pi-voice/in', utterance({ msg_id: messageId }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(harness.inbound).toHaveLength(2);
+  });
+
+  it('rejects retained /in replay without poisoning the live message id', async () => {
+    const harness = createHarness();
+    await startHarness(harness);
+
+    harness.client.receive('nanoclaw/v1/devices/pi-voice/in', utterance(), { retain: true });
+
+    await vi.waitFor(() => expect(harness.client.published).toHaveLength(1));
+    expect(harness.inbound).toHaveLength(0);
+    expect(JSON.parse(harness.client.published[0]!.payload)).toMatchObject({
+      type: 'error',
+      code: 'retained_inbound',
+    });
+
+    harness.client.receive('nanoclaw/v1/devices/pi-voice/in', utterance());
+    await vi.waitFor(() => expect(harness.inbound).toHaveLength(1));
+  });
+
   it('sets reply correlation before invoking the host callback', async () => {
     const adapterRef: { current?: ReturnType<typeof createHarness>['adapter'] } = {};
     const harness = createHarness(new Set(['pi-voice']), async (platformId) => {
@@ -299,6 +335,27 @@ describe('MQTT channel adapter', () => {
     await expect(
       harness.adapter.deliver('mqtt:pi-voice@local', null, { kind: 'chat', content: { text: 'reply' } }),
     ).rejects.toThrow('broker publish failed');
+  });
+
+  it('fails unsupported outbound payloads instead of acknowledging a send that never happened', async () => {
+    const harness = createHarness();
+    await startHarness(harness);
+
+    await expect(
+      harness.adapter.deliver('mqtt:pi-voice@local', null, {
+        kind: 'chat',
+        content: { type: 'ask_question', title: 'Choose one' },
+      }),
+    ).rejects.toThrow(/non-empty text/i);
+    await expect(
+      harness.adapter.deliver('mqtt:pi-voice@local', null, {
+        kind: 'chat',
+        content: { text: 'See attachment' },
+        files: [{ filename: 'note.txt', data: Buffer.from('hello') }],
+      }),
+    ).rejects.toThrow(/file attachments/i);
+
+    expect(harness.client.published).toHaveLength(0);
   });
 
   it('rejects credentials embedded in MQTT_URL', () => {

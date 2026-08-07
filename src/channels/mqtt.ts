@@ -287,6 +287,12 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
   const processedOrder: string[] = [];
   const processingIds = new Set<string>();
 
+  function processedKey(deviceId: string, messageId: string): string {
+    // msg_id uniqueness belongs to one device. Length-prefix the device id so
+    // even arbitrary protocol-valid message ids cannot collide across devices.
+    return `${deviceId.length}:${deviceId}${messageId}`;
+  }
+
   async function publish(topic: string, value: Record<string, unknown>): Promise<void> {
     if (!client?.connected || !connected) throw new Error('MQTT broker is not connected');
     await new Promise<void>((resolve, reject) => {
@@ -313,9 +319,9 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
     });
   }
 
-  function rememberProcessed(messageId: string): void {
-    processedIds.add(messageId);
-    processedOrder.push(messageId);
+  function rememberProcessed(key: string): void {
+    processedIds.add(key);
+    processedOrder.push(key);
     while (processedOrder.length > MAX_PROCESSED_IDS) {
       const oldest = processedOrder.shift();
       if (oldest) processedIds.delete(oldest);
@@ -335,14 +341,15 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
       return;
     }
     const envelope = parsed.value;
-    if (processedIds.has(envelope.msg_id) || processingIds.has(envelope.msg_id)) {
+    const key = processedKey(deviceId, envelope.msg_id);
+    if (processedIds.has(key) || processingIds.has(key)) {
       log.debug('MQTT ignored duplicate inbound message', { deviceId, messageId: envelope.msg_id });
       return;
     }
 
     const platformId = mqttPlatformId(deviceId);
     const previousInboundId = lastInboundByPlatformId.get(platformId);
-    processingIds.add(envelope.msg_id);
+    processingIds.add(key);
     lastInboundByPlatformId.set(platformId, envelope.msg_id);
     try {
       await channelSetup?.onInbound(platformId, null, {
@@ -356,13 +363,13 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
           senderId: platformId,
         },
       });
-      rememberProcessed(envelope.msg_id);
+      rememberProcessed(key);
     } catch (err) {
       if (previousInboundId) lastInboundByPlatformId.set(platformId, previousInboundId);
       else lastInboundByPlatformId.delete(platformId);
       throw err;
     } finally {
-      processingIds.delete(envelope.msg_id);
+      processingIds.delete(key);
     }
   }
 
@@ -386,9 +393,18 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
     });
   }
 
-  async function handleMessage(topic: string, payload: Buffer): Promise<void> {
+  async function handleMessage(topic: string, payload: Buffer, retained: boolean): Promise<void> {
     const address = parseTopic(prefix, topic);
     if (!address) return;
+    if (address.kind === 'in' && retained) {
+      log.warn('MQTT rejected retained inbound utterance', { deviceId: address.deviceId });
+      await publishError(
+        address.deviceId,
+        'retained_inbound',
+        'Retained inbound utterances are not accepted; publish to /in with retain=false',
+      );
+      return;
+    }
     if (address.kind === 'in') await handleInbound(address.deviceId, payload);
     else await handleStatus(address.deviceId, payload);
   }
@@ -412,8 +428,10 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
       };
       const createdClient = connectClient(options.url, mqttOptions);
       client = createdClient;
-      createdClient.on('message', (topic, payload) => {
-        void handleMessage(topic, payload).catch((err) => log.error('MQTT inbound handler failed', { topic, err }));
+      createdClient.on('message', (topic, payload, packet) => {
+        void handleMessage(topic, payload, packet.retain === true).catch((err) =>
+          log.error('MQTT inbound handler failed', { topic, err }),
+        );
       });
       createdClient.on('close', () => {
         connected = false;
@@ -482,8 +500,11 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
       if (!deviceId || !allowedDeviceIds.has(deviceId)) {
         throw new Error(`MQTT cannot deliver to unregistered platform id: ${platformId}`);
       }
+      if (message.files && message.files.length > 0) {
+        throw new Error('MQTT protocol v1 does not support file attachments');
+      }
       const text = extractText(message);
-      if (!text) return undefined;
+      if (!text) throw new Error('MQTT protocol v1 requires non-empty text content');
       const messageId = randomUUID();
       const inReplyTo = lastInboundByPlatformId.get(platformId);
       await publish(`${prefix}/devices/${deviceId}/out`, {
