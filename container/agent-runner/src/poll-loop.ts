@@ -12,9 +12,11 @@ import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/con
 import {
   clearContinuation,
   clearCurrentInReplyTo,
+  clearTurnOutboundBaseline,
   migrateLegacyContinuation,
   setContinuation,
   setCurrentInReplyTo,
+  setTurnOutboundBaseline,
 } from './db/session-state.js';
 import {
   formatMessages,
@@ -258,6 +260,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
+    // Where outbound stood before the turn ran, so the tools can tell what this
+    // turn has already written. Republished per follow-up push below; the reply
+    // stamp is not, so it cannot serve as the turn boundary.
+    setTurnOutboundBaseline(getMaxOutboundSeq());
     try {
       const result = await processQuery(
         query,
@@ -302,6 +308,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       log(`Errored batch will be acked completed — ${processingIds.length} message(s), no redelivery`);
     } finally {
       clearCurrentInReplyTo();
+      clearTurnOutboundBaseline();
     }
 
     // Ensure completed even if processQuery ended without a result event
@@ -497,6 +504,10 @@ export async function processQuery(
         unwrappedNudged = false;
         taskBlockNudged = false;
         outboundBaselineSeq = getMaxOutboundSeq();
+        // A follow-up batch is a new turn, so the tools' view of the boundary
+        // moves with it. Correction and nudge pushes deliberately do not touch
+        // this: those continue the turn already in progress.
+        setTurnOutboundBaseline(outboundBaselineSeq);
         // A follow-up puts its own correspondent on the hook, queued behind any
         // already waiting. The queue and the judged-seq mark deliberately
         // survive the push: clearing either here is what would let a steady

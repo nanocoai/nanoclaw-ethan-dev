@@ -190,6 +190,75 @@ function isNewUserContent(content: string): boolean {
   }
 }
 
+/**
+ * Seq of an already-written chat row carrying the same text to the same
+ * destination within the same turn, or null when there is none.
+ *
+ * `sinceSeq` is what scopes the lookup to one turn: it is the outbound baseline
+ * the poll loop publishes when a turn starts, so only rows written during this
+ * turn can match, and the same short answer given again an hour later counts as
+ * a new message rather than a repeat. The in_reply_to stamp cannot serve as that
+ * anchor — it is set when a query opens and is not refreshed when a follow-up
+ * batch is pushed into a still-open query, so in a long-lived query it would
+ * scope "this turn" to the whole life of the container.
+ *
+ * Scheduled rows (`deliver_after`) are excluded — those are queued for a later
+ * moment and a same-text pair is legitimate.
+ *
+ * Routing is matched with `IS` rather than `=` because platform_id, channel_type
+ * and thread_id are all nullable, and SQL equality against NULL is never true:
+ * with `=`, two agent-channel sends with no thread would fail to match and the
+ * duplicate would go out.
+ *
+ * The text comparison is trimmed, so whitespace-only variation still reads as
+ * the same message. Rows whose content is not JSON, or carries no text, describe
+ * something other than a plain chat send and are skipped.
+ *
+ * The scan is capped: past the cap the answer is "no duplicate", which delivers
+ * a repeat rather than silently swallowing a distinct message.
+ */
+const DUPLICATE_SCAN_LIMIT = 100;
+
+export function findDuplicateChatSend(opts: {
+  sinceSeq: number;
+  platformId: string | null;
+  channelType: string | null;
+  threadId: string | null;
+  text: string;
+}): number | null {
+  const rows = getOutboundDb()
+    .prepare(
+      `SELECT seq, content FROM messages_out
+       WHERE kind = 'chat'
+         AND deliver_after IS NULL
+         AND seq > $since
+         AND platform_id IS $platform_id
+         AND channel_type IS $channel_type
+         AND thread_id IS $thread_id
+       ORDER BY seq DESC
+       LIMIT ${DUPLICATE_SCAN_LIMIT}`,
+    )
+    .all({
+      $since: opts.sinceSeq,
+      $platform_id: opts.platformId,
+      $channel_type: opts.channelType,
+      $thread_id: opts.threadId,
+    }) as Array<{ seq: number | null; content: string }>;
+
+  const wanted = opts.text.trim();
+  for (const row of rows) {
+    if (row.seq === null) continue;
+    let text: unknown;
+    try {
+      text = (JSON.parse(row.content) as { text?: unknown }).text;
+    } catch {
+      continue;
+    }
+    if (typeof text === 'string' && text.trim() === wanted) return row.seq;
+  }
+  return null;
+}
+
 /** Get undelivered messages (for host polling — reads from outbound.db). */
 export function getUndeliveredMessages(): MessageOutRow[] {
   return getOutboundDb()
