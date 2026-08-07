@@ -1,0 +1,29 @@
+{
+  "notes": "Conformance fixtures for scripts/skill-conformance.test.ts. Values are shaped test data only. Two scenarios cover anonymous and password-authenticated brokers.",
+  "scenarios": [
+    {
+      "name": "anonymous",
+      "inputs": {
+        "broker_url": "mqtt://broker.test:1883",
+        "client_id": "nanoclaw-test",
+        "device_allowlist": "pi-voice,kitchen-panel",
+        "auth_mode": "anonymous",
+        "reject_unauthorized": "true"
+      },
+      "exec": []
+    },
+    {
+      "name": "password",
+      "inputs": {
+        "broker_url": "mqtts://broker.test:8883",
+        "client_id": "nanoclaw-test",
+        "device_allowlist": "pi-voice",
+        "auth_mode": "password",
+        "broker_username": "nanoclaw-host",
+        "broker_password": "fake-password",
+        "reject_unauthorized": "true"
+      },
+      "exec": []
+    }
+  ]
+}
