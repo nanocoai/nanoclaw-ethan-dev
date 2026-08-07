@@ -24,7 +24,7 @@ import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
-import type { OutboundFile } from './channels/adapter.js';
+import type { OutboundDeliveryMetadata, OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
 
 const ACTIVE_POLL_MS = 1000;
@@ -57,6 +57,7 @@ export interface ChannelDeliveryAdapter {
     kind: string,
     content: string,
     files?: OutboundFile[],
+    metadata?: OutboundDeliveryMetadata,
   ): Promise<string | undefined>;
   setTyping?(channelType: string, platformId: string, threadId: string | null): Promise<void>;
 }
@@ -234,6 +235,7 @@ async function drainSession(session: Session): Promise<void> {
 async function deliverMessage(
   msg: {
     id: string;
+    in_reply_to: string | null;
     kind: string;
     platform_id: string | null;
     channel_type: string | null;
@@ -359,6 +361,10 @@ async function deliverMessage(
     msg.kind,
     msg.content,
     files,
+    {
+      deliveryId: `${session.id}:${msg.id}`,
+      inReplyTo: platformReplyId(msg.in_reply_to, session.agent_group_id),
+    },
   );
   log.info('Message delivered', {
     id: msg.id,
@@ -371,6 +377,17 @@ async function deliverMessage(
   clearOutbox(session.agent_group_id, session.id, msg.id);
 
   return platformMsgId;
+}
+
+/**
+ * Router fan-out namespaces inbound IDs as `<platform-id>:<agent-group-id>`
+ * before storing them in a session DB. messages_out.in_reply_to carries that
+ * durable session ID, while channel protocols need the original platform ID.
+ */
+function platformReplyId(inReplyTo: string | null, agentGroupId: string): string | null {
+  if (inReplyTo === null) return null;
+  const suffix = `:${agentGroupId}`;
+  return inReplyTo.endsWith(suffix) ? inReplyTo.slice(0, -suffix.length) : inReplyTo;
 }
 
 /**

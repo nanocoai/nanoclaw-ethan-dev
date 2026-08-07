@@ -197,8 +197,8 @@ describe('channel + router integration', () => {
   });
 
   it('should deliver outbound message through delivery adapter bridge', async () => {
-    const { setDeliveryAdapter } = await import('../delivery.js');
-    const { getChannelAdapter, registerChannelAdapter, initChannelAdapters } = await import('./channel-registry.js');
+    const { createChannelDeliveryAdapter, registerChannelAdapter, initChannelAdapters } =
+      await import('./channel-registry.js');
 
     // Register and init a mock adapter
     const mockAdapter = createMockAdapter('mock');
@@ -214,22 +214,18 @@ describe('channel + router integration', () => {
       onAction: () => {},
     }));
 
-    // Set up delivery adapter bridge (same pattern as index.ts)
-    setDeliveryAdapter({
-      async deliver(channelType, platformId, threadId, kind, content) {
-        const adapter = getChannelAdapter(channelType);
-        if (!adapter) return undefined;
-        return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content) });
-      },
+    const bridge = createChannelDeliveryAdapter();
+    await bridge.deliver('mock', 'chan-100', null, 'chat', JSON.stringify({ text: 'Agent response' }), undefined, {
+      deliveryId: 'session-1:out-1',
+      inReplyTo: 'platform-in-1',
     });
 
-    // Simulate delivery
-    const adapter = getChannelAdapter('mock');
-    if (adapter) {
-      await adapter.deliver('chan-100', null, { kind: 'chat', content: { text: 'Agent response' } });
-    }
-
     expect(mockAdapter.delivered).toHaveLength(1);
-    expect((mockAdapter.delivered[0].content as { text: string }).text).toBe('Agent response');
+    expect(mockAdapter.delivered[0]).toMatchObject({
+      kind: 'chat',
+      content: { text: 'Agent response' },
+      deliveryId: 'session-1:out-1',
+      inReplyTo: 'platform-in-1',
+    });
   });
 });

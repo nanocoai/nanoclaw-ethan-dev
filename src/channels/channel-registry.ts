@@ -4,7 +4,14 @@
  * Channels self-register on import. The host calls initChannelAdapters() at startup
  * to instantiate and set up all registered adapters.
  */
-import type { ChannelAdapter, ChannelDefaults, ChannelRegistration, ChannelSetup, OutboundFile } from './adapter.js';
+import type {
+  ChannelAdapter,
+  ChannelDefaults,
+  ChannelRegistration,
+  ChannelSetup,
+  OutboundDeliveryMetadata,
+  OutboundFile,
+} from './adapter.js';
 import type { ChannelDeliveryAdapter } from '../delivery.js';
 import { log } from '../log.js';
 
@@ -58,10 +65,16 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
       kind: string,
       content: string,
       files?: OutboundFile[],
+      metadata?: OutboundDeliveryMetadata,
     ): Promise<string | undefined> {
       const adapter = getChannelAdapter(channelType);
       if (!adapter) throw new MissingChannelAdapterError(channelType);
-      return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content), files });
+      return adapter.deliver(platformId, threadId, {
+        kind,
+        content: JSON.parse(content),
+        files,
+        ...(metadata ? { deliveryId: metadata.deliveryId, inReplyTo: metadata.inReplyTo } : {}),
+      });
     },
     async setTyping(channelType: string, platformId: string, threadId: string | null): Promise<void> {
       const adapter = getChannelAdapter(channelType);

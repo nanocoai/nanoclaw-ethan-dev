@@ -31,6 +31,7 @@ import { getDeliveredIds } from './db/session-db.js';
 import { resolveSession, outboundDbPath, openInboundDb } from './session-manager.js';
 import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
 import { createChannelDeliveryAdapter } from './channels/channel-registry.js';
+import type { OutboundDeliveryMetadata } from './channels/adapter.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -55,12 +56,12 @@ function seedAgentAndChannel(): void {
   });
 }
 
-function insertOutbound(agentGroupId: string, sessionId: string, msgId: string): void {
+function insertOutbound(agentGroupId: string, sessionId: string, msgId: string, inReplyTo: string | null = null): void {
   const db = new Database(outboundDbPath(agentGroupId, sessionId));
   db.prepare(
-    `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
-     VALUES (?, datetime('now'), 'chat', 'telegram:123', 'telegram', ?)`,
-  ).run(msgId, JSON.stringify({ text: 'hello' }));
+    `INSERT INTO messages_out (id, in_reply_to, timestamp, kind, platform_id, channel_type, content)
+     VALUES (?, ?, datetime('now'), 'chat', 'telegram:123', 'telegram', ?)`,
+  ).run(msgId, inReplyTo, JSON.stringify({ text: 'hello' }));
   db.close();
 }
 
@@ -121,6 +122,30 @@ describe('deliverSessionMessages — concurrent invocations', () => {
     insertOutbound('ag-1', session.id, 'out-second');
     await deliverSessionMessages(session);
     expect(calls).toHaveLength(2);
+  });
+
+  it('carries stable delivery identity and raw reply correlation across retries', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutbound('ag-1', session.id, 'out-correlated', 'device-message-1:ag-1');
+
+    const calls: OutboundDeliveryMetadata[] = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, _platformId, _threadId, _kind, _content, _files, metadata) {
+        if (!metadata) throw new Error('missing delivery metadata');
+        calls.push(metadata);
+        if (calls.length === 1) throw new Error('ambiguous first attempt');
+        return 'platform-message-1';
+      },
+    });
+
+    await deliverSessionMessages(session);
+    await deliverSessionMessages(session);
+
+    expect(calls).toEqual([
+      { deliveryId: `${session.id}:out-correlated`, inReplyTo: 'device-message-1' },
+      { deliveryId: `${session.id}:out-correlated`, inReplyTo: 'device-message-1' },
+    ]);
   });
 
   it('does not re-deliver when retried after a successful send (cleanup-after-send safety)', async () => {

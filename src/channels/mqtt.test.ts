@@ -321,6 +321,40 @@ describe('MQTT channel adapter', () => {
     });
   });
 
+  it('uses host delivery metadata for stable ids and exact correlation', async () => {
+    const harness = createHarness();
+    await startHarness(harness);
+    harness.client.receive('nanoclaw/v1/devices/pi-voice/in', utterance({ msg_id: 'newer-process-local-id' }));
+    await vi.waitFor(() => expect(harness.inbound).toHaveLength(1));
+
+    const outbound = {
+      kind: 'chat',
+      content: { text: 'agent reply' },
+      deliveryId: 'session-1:out-1',
+      inReplyTo: 'exact-device-message-id',
+    };
+    const firstId = await harness.adapter.deliver('mqtt:pi-voice@local', null, outbound);
+    const retryId = await harness.adapter.deliver('mqtt:pi-voice@local', null, outbound);
+
+    expect(firstId).toBe(retryId);
+    expect(firstId).toMatch(/^nc-[0-9a-f]{64}$/);
+    expect(JSON.parse(harness.client.published[0]!.payload)).toMatchObject({
+      msg_id: firstId,
+      in_reply_to: 'exact-device-message-id',
+    });
+    expect(JSON.parse(harness.client.published[1]!.payload)).toMatchObject({
+      msg_id: firstId,
+      in_reply_to: 'exact-device-message-id',
+    });
+
+    await harness.adapter.deliver('mqtt:pi-voice@local', null, {
+      ...outbound,
+      deliveryId: 'session-1:out-without-correlation',
+      inReplyTo: null,
+    });
+    expect(JSON.parse(harness.client.published[2]!.payload)).not.toHaveProperty('in_reply_to');
+  });
+
   it('throws outbound failures so the delivery retry path owns recovery', async () => {
     const harness = createHarness();
     await expect(

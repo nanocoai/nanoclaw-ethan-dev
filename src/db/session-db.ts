@@ -213,6 +213,7 @@ export function getContainerState(outDb: Database.Database): ContainerState | nu
 
 export interface OutboundMessage {
   id: string;
+  in_reply_to: string | null;
   kind: string;
   platform_id: string | null;
   channel_type: string | null;

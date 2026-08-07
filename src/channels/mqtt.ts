@@ -6,7 +6,7 @@
  * routes each allowlisted device through its own `mqtt:<device_id>@local`
  * messaging-group address.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { TextDecoder } from 'node:util';
 
 import { connect, type IClientOptions, type MqttClient } from 'mqtt';
@@ -267,6 +267,11 @@ function extractText(message: OutboundMessage): string | null {
   return typeof text === 'string' && text.trim() ? text.trim() : null;
 }
 
+function outboundMessageId(platformId: string, deliveryId: string | undefined): string {
+  if (!deliveryId) return randomUUID();
+  return `nc-${createHash('sha256').update(platformId).update('\0').update(deliveryId).digest('hex')}`;
+}
+
 export function createMqttAdapter(options: MqttAdapterOptions, connectClient: MqttConnect = connect): ChannelAdapter {
   const prefix = normalizePrefix(options.prefix);
   const broker = validateBrokerUrl(options.url);
@@ -505,8 +510,9 @@ export function createMqttAdapter(options: MqttAdapterOptions, connectClient: Mq
       }
       const text = extractText(message);
       if (!text) throw new Error('MQTT protocol v1 requires non-empty text content');
-      const messageId = randomUUID();
-      const inReplyTo = lastInboundByPlatformId.get(platformId);
+      const messageId = outboundMessageId(platformId, message.deliveryId);
+      const inReplyTo =
+        message.inReplyTo === undefined ? lastInboundByPlatformId.get(platformId) : (message.inReplyTo ?? undefined);
       await publish(`${prefix}/devices/${deviceId}/out`, {
         v: 1,
         msg_id: messageId,

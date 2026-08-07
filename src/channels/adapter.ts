@@ -99,6 +99,24 @@ export interface OutboundMessage {
   kind: string;
   content: unknown; // parsed JSON from messages_out
   files?: OutboundFile[]; // file attachments from the session outbox
+  /**
+   * Stable host-side identity for this delivery. Retries of one outbound row
+   * receive the same value; adapters may derive an idempotency key or platform
+   * message ID from it. Optional for direct adapter callers and older bridges.
+   */
+  deliveryId?: string;
+  /**
+   * Raw platform message ID this outbound row replies to. `null` means the
+   * host explicitly has no correlation; `undefined` means an older/direct
+   * caller did not provide delivery metadata.
+   */
+  inReplyTo?: string | null;
+}
+
+/** Generic metadata carried from one persisted messages_out row to an adapter. */
+export interface OutboundDeliveryMetadata {
+  deliveryId: string;
+  inReplyTo: string | null;
 }
 
 /** Discovered conversation info (from syncConversations). */
