@@ -45,6 +45,9 @@ import './whatsapp-cloud.js';
 // imessage
 import './imessage.js';
 
+// mqtt
+import './mqtt.js';
+
 // gmail (native, no Chat SDK)
 
 // whatsapp (native, no Chat SDK)

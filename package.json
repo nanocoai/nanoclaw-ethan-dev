@@ -46,6 +46,7 @@
     "chat-adapter-imessage": "^0.1.1",
     "cron-parser": "5.5.0",
     "kleur": "^4.1.5",
+    "mqtt": "5.15.2",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
     "wechat-ilink-client": "^0.1.0"
