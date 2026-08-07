@@ -195,16 +195,18 @@ export interface RoutableAgentMessage {
  *    conversation, and replies should land there even when the target has
  *    multiple active sessions.
  *
- * 2. **Peer-affinity fallback**: if (1) misses (in_reply_to is null or the
- *    referenced row isn't an a2a inbound), look up the most recent a2a
- *    inbound *from the target agent group* in source's inbound and use its
- *    `source_session_id`. The intuition: the last time this peer talked to
- *    me, which target session was driving? Route the reply there, since
- *    that's the session most plausibly in active conversation.
+ * 2. **Peer-affinity fallback**: when `in_reply_to` is absent, look up the
+ *    most recent a2a inbound *from the target agent group* in source's inbound
+ *    and use its `source_session_id`. The intuition: the last time this peer
+ *    talked to me, which target session was driving? A concrete non-a2a
+ *    `in_reply_to` instead represents a new channel-triggered request, so stale
+ *    peer affinity must not override the current-session fallback.
  *
- * 3. **Newest active session**: legacy heuristic. Used when no prior a2a
- *    has been recorded with `source_session_id` (e.g. fresh installs,
- *    pre-migration data).
+ * 3. **Most recently active session**: legacy heuristic. Used when no prior
+ *    a2a has been recorded with `source_session_id` (e.g. fresh installs,
+ *    pre-migration data). This follows actual activity rather than session
+ *    creation order so a newer but unrelated channel does not steal the
+ *    message from the conversation the user is currently using.
  */
 function resolveTargetSession(msg: RoutableAgentMessage, sourceSession: Session, targetAgentGroupId: string): Session {
   const srcDb = openInboundDb(sourceSession.agent_group_id, sourceSession.id);
@@ -213,7 +215,7 @@ function resolveTargetSession(msg: RoutableAgentMessage, sourceSession: Session,
     if (msg.in_reply_to) {
       originSessionId = getInboundSourceSessionId(srcDb, msg.in_reply_to);
     }
-    if (!originSessionId) {
+    if (!msg.in_reply_to) {
       // Peer-affinity fallback — covers the case where the container's
       // outbound write didn't carry in_reply_to (e.g. legacy MCP send_message
       // path, container running pre-fix code).

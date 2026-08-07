@@ -241,6 +241,28 @@ describe('routeAgentMessage return-path', () => {
     expect(s2Rows).toHaveLength(1);
   });
 
+  it('fresh fallback routes to the most recently active session, not the most recently created', async () => {
+    // S1 is the session the user is currently using. S2 was created later,
+    // but its last activity is older and must not make it steal a fresh A2A.
+    updateSession(S1.id, { last_active: '2026-03-01T00:00:00.000Z' });
+    updateSession(S2.id, { last_active: '2026-02-15T00:00:00.000Z' });
+
+    await routeAgentMessage(
+      {
+        id: 'msg-from-B-fresh-current',
+        platform_id: A,
+        content: JSON.stringify({ text: 'for the current conversation' }),
+        in_reply_to: null,
+      },
+      SB,
+    );
+
+    const s1Rows = readInbound(A, S1.id);
+    const s2Rows = readInbound(A, S2.id);
+    expect(s1Rows).toHaveLength(1);
+    expect(s2Rows).toHaveLength(0);
+  });
+
   it('peer-affinity fallback: with no in_reply_to, routes to most recent peer-source session', async () => {
     // A.S1 sends to B (establishing affinity: B's last contact from A was via S1).
     await routeAgentMessage(
@@ -344,7 +366,21 @@ describe('routeAgentMessage return-path', () => {
     expect(s2Rows).toHaveLength(1);
   });
 
-  it('in_reply_to referencing a non-a2a row falls through to newest session', async () => {
+  it('channel-triggered a2a ignores stale peer affinity and routes to the current session', async () => {
+    // An earlier misroute established stale affinity with S2. S1 has since
+    // become the session the user is actively using.
+    await routeAgentMessage(
+      {
+        id: 'msg-from-A-S2-old',
+        platform_id: B,
+        content: JSON.stringify({ text: 'old context' }),
+        in_reply_to: null,
+      },
+      S2,
+    );
+    updateSession(S1.id, { last_active: '2026-03-01T00:00:00.000Z' });
+    updateSession(S2.id, { last_active: '2026-02-15T00:00:00.000Z' });
+
     // Write a channel message into B's inbound (no source_session_id).
     writeSessionMessage(B, SB.id, {
       id: 'channel-msg-1',
@@ -356,8 +392,8 @@ describe('routeAgentMessage return-path', () => {
       content: 'hello from slack',
     });
 
-    // B replies to A with in_reply_to pointing to the channel message.
-    // source_session_id is null → peer-affinity finds nothing → newest of A.
+    // B sends to A while replying to the concrete channel message. The stale
+    // S2 affinity must not steal this new channel-triggered request from S1.
     await routeAgentMessage(
       {
         id: 'msg-reply-channel',
@@ -370,8 +406,8 @@ describe('routeAgentMessage return-path', () => {
 
     const s1Rows = readInbound(A, S1.id);
     const s2Rows = readInbound(A, S2.id);
-    expect(s1Rows).toHaveLength(0);
-    expect(s2Rows).toHaveLength(1);
+    expect(s1Rows).toHaveLength(1);
+    expect(s2Rows).toHaveLength(0);
   });
 
   it('self-message is allowed without a destination row', async () => {

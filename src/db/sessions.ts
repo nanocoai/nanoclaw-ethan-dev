@@ -54,7 +54,13 @@ export function findSessionForAgent(
     .get(agentGroupId, messagingGroupId) as Session | undefined;
 }
 
-/** Find an active session scoped to an agent group (ignoring messaging group). */
+/**
+ * Find the most recently active non-system session scoped to an agent group.
+ *
+ * `last_active` tracks real message/container activity, so it is the best
+ * available fallback when a caller has no exact messaging-group or return-path
+ * identity. Sessions that have never been active fall back to creation time.
+ */
 export function findSessionByAgentGroup(agentGroupId: string): Session | undefined {
   return getDb()
     .prepare(
@@ -62,7 +68,7 @@ export function findSessionByAgentGroup(agentGroupId: string): Session | undefin
        WHERE agent_group_id = ?
          AND status = 'active'
          AND NOT (messaging_group_id IS NULL AND thread_id IS NOT NULL AND thread_id LIKE 'system:%')
-       ORDER BY created_at DESC
+       ORDER BY COALESCE(last_active, created_at) DESC, created_at DESC
        LIMIT 1`,
     )
     .get(agentGroupId) as Session | undefined;

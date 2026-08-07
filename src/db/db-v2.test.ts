@@ -23,6 +23,7 @@ import {
   createSession,
   getSession,
   findSession,
+  findSessionByAgentGroup,
   getSessionsByAgentGroup,
   getActiveSessions,
   getRunningSessions,
@@ -368,6 +369,33 @@ describe('sessions', () => {
     createSession(sess());
     createSession({ ...sess(), id: 'sess-2', thread_id: 'thread-1' });
     expect(getSessionsByAgentGroup('ag-1')).toHaveLength(2);
+  });
+
+  it('should find the most recently active session rather than the most recently created', () => {
+    createMessagingGroup({
+      id: 'mg-2',
+      channel_type: 'telegram',
+      platform_id: 'chat-2',
+      name: 'Telegram',
+      is_group: 0,
+      unknown_sender_policy: 'strict',
+      created_at: now(),
+    });
+    createSession({
+      ...sess(),
+      id: 'sess-current',
+      last_active: '2026-03-01T00:00:00.000Z',
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    createSession({
+      ...sess(),
+      id: 'sess-newer',
+      messaging_group_id: 'mg-2',
+      last_active: '2026-02-01T00:00:00.000Z',
+      created_at: '2026-02-01T00:00:00.000Z',
+    });
+
+    expect(findSessionByAgentGroup('ag-1')?.id).toBe('sess-current');
   });
 
   it('should list active sessions', () => {
