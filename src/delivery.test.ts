@@ -27,8 +27,10 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-delivery';
 
 import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from './db/index.js';
-import { resolveSession, outboundDbPath } from './session-manager.js';
+import { getDeliveredIds } from './db/session-db.js';
+import { resolveSession, outboundDbPath, openInboundDb } from './session-manager.js';
 import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
+import { createChannelDeliveryAdapter } from './channels/channel-registry.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -144,5 +146,33 @@ describe('deliverSessionMessages — concurrent invocations', () => {
     await deliverSessionMessages(session);
 
     expect(callCount).toBe(1);
+  });
+
+  it('does not acknowledge a message when its channel adapter failed to start (#2995)', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutbound('ag-1', session.id, 'out-offline');
+
+    // The real bridge with an empty active-adapter registry reproduces the
+    // state after a configured adapter throws during setup.
+    setDeliveryAdapter(createChannelDeliveryAdapter());
+
+    await deliverSessionMessages(session);
+    let inDb = openInboundDb('ag-1', session.id);
+    expect(getDeliveredIds(inDb).has('out-offline')).toBe(false);
+    inDb.close();
+
+    // The existing bounded retry policy records an explicit failure after
+    // three attempts. It must never record a successful delivery.
+    await deliverSessionMessages(session);
+    await deliverSessionMessages(session);
+
+    inDb = openInboundDb('ag-1', session.id);
+    const row = inDb
+      .prepare('SELECT status, platform_message_id FROM delivered WHERE message_out_id = ?')
+      .get('out-offline') as { status: string; platform_message_id: string | null } | undefined;
+    inDb.close();
+
+    expect(row).toEqual({ status: 'failed', platform_message_id: null });
   });
 });

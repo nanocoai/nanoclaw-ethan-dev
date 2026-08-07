@@ -4,7 +4,8 @@
  * Channels self-register on import. The host calls initChannelAdapters() at startup
  * to instantiate and set up all registered adapters.
  */
-import type { ChannelAdapter, ChannelDefaults, ChannelRegistration, ChannelSetup } from './adapter.js';
+import type { ChannelAdapter, ChannelDefaults, ChannelRegistration, ChannelSetup, OutboundFile } from './adapter.js';
+import type { ChannelDeliveryAdapter } from '../delivery.js';
 import { log } from '../log.js';
 
 const SETUP_RETRY_DELAYS_MS = [2000, 5000, 10000];
@@ -29,6 +30,44 @@ export function registerChannelAdapter(name: string, registration: ChannelRegist
 /** Get a live adapter by channel type. */
 export function getChannelAdapter(channelType: string): ChannelAdapter | undefined {
   return activeAdapters.get(channelType);
+}
+
+/**
+ * Thrown when an outbound message targets a channel whose adapter did not
+ * start. A normal `undefined` return is reserved for successful adapters that
+ * do not expose a platform message id; returning it here would make the
+ * delivery loop record a send that never happened (#2995).
+ */
+export class MissingChannelAdapterError extends Error {
+  constructor(readonly channelType: string) {
+    super(
+      `No adapter registered for '${channelType}' — message enters the delivery retry path. ` +
+        `Check the startup log for why this channel's adapter did not start.`,
+    );
+    this.name = 'MissingChannelAdapterError';
+  }
+}
+
+/** Build the host bridge from outbound delivery into active channel adapters. */
+export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
+  return {
+    async deliver(
+      channelType: string,
+      platformId: string,
+      threadId: string | null,
+      kind: string,
+      content: string,
+      files?: OutboundFile[],
+    ): Promise<string | undefined> {
+      const adapter = getChannelAdapter(channelType);
+      if (!adapter) throw new MissingChannelAdapterError(channelType);
+      return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content), files });
+    },
+    async setTyping(channelType: string, platformId: string, threadId: string | null): Promise<void> {
+      const adapter = getChannelAdapter(channelType);
+      await adapter?.setTyping?.(platformId, threadId);
+    },
+  };
 }
 
 /**
