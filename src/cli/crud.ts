@@ -398,8 +398,8 @@ export function validateArgs(
         if (typeof v === 'string') {
           try {
             out[def.name] = JSON.parse(v);
-          } catch {
-            throw new Error(`${flag} must be valid JSON`);
+          } catch (err) {
+            throw new Error(`${flag} must be valid JSON`, { cause: err });
           }
         }
         break;
@@ -504,7 +504,7 @@ export function registerResource(def: ResourceDef): void {
               } catch (e) {
                 const usage = renderVerbHelp(def, verb);
                 const msg = e instanceof Error ? e.message : String(e);
-                throw new Error(usage ? `${msg}\n\n${usage}` : msg);
+                throw new Error(usage ? `${msg}\n\n${usage}` : msg, { cause: e });
               }
             }
           : (raw) => normalizeArgs(raw),

@@ -209,7 +209,7 @@ function createAdapter(): ChannelAdapter {
     try {
       payload = JSON.parse(line);
     } catch (err) {
-      log.warn('CLI: ignoring non-JSON line from client', { line });
+      log.warn('CLI: ignoring non-JSON line from client', { line, err });
       return;
     }
     if (typeof payload.text !== 'string' || payload.text.length === 0) return;

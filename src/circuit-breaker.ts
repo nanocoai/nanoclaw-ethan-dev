@@ -40,7 +40,11 @@ export function resetCircuitBreaker(): void {
   try {
     fs.unlinkSync(CB_PATH);
     log.info('Circuit breaker reset on clean shutdown');
-  } catch {}
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      log.warn('Failed to reset circuit breaker', { err });
+    }
+  }
 }
 
 export async function enforceStartupBackoff(): Promise<void> {
