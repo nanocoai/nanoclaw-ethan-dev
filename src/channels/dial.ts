@@ -135,6 +135,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   const spoolDir = path.join(DATA_DIR, 'dial', 'inbound');
   const handlerPath = path.join(DATA_DIR, 'dial', 'handle-dial-event.sh');
   const policyPath = path.join(DATA_DIR, 'dial', 'inbound-policy.json');
+  const stampPath = path.join(DATA_DIR, 'dial', 'policy-seeded.json');
   // Fallback line for events that don't name the number they arrived on. Each
   // event's actual destination (data.to) takes precedence, so the adapter
   // serves every number on the account, not just this one. Resolved lazily via
@@ -217,16 +218,57 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   function ensureLinesAreGroups(): void {
     try {
       const wanted = inboundPolicy();
+      const stamped = readStampedLines();
+      let newlyStamped = false;
       for (const mg of getMessagingGroupsByChannel('dial')) {
         const updates: Partial<Pick<MessagingGroup, 'is_group' | 'unknown_sender_policy'>> = {};
         if (mg.is_group !== 1) updates.is_group = 1;
-        if (mg.unknown_sender_policy !== wanted) updates.unknown_sender_policy = wanted;
-        if (Object.keys(updates).length === 0) continue;
-        updateMessagingGroup(mg.id, updates);
-        log.info('Dial: reconciled line', { platformId: mg.platform_id, ...updates });
+        // The setup choice seeds a line once. After that the row owns its
+        // policy: it is an operator field (`ncl messaging-groups update`), and
+        // re-applying the file on every event would revert any later change,
+        // including the two values the file cannot express
+        // (`request_approval`, `decline_notify`).
+        if (!stamped.has(mg.platform_id)) {
+          if (mg.unknown_sender_policy !== wanted) updates.unknown_sender_policy = wanted;
+          stamped.add(mg.platform_id);
+          newlyStamped = true;
+        }
+        if (Object.keys(updates).length > 0) {
+          updateMessagingGroup(mg.id, updates);
+          log.info('Dial: reconciled line', { platformId: mg.platform_id, ...updates });
+        }
       }
+      if (newlyStamped) writeStampedLines(stamped);
     } catch (err) {
       log.warn('Dial: could not reconcile the line — correspondents may share one session', { err });
+    }
+  }
+
+  /**
+   * Lines whose `unknown_sender_policy` has already been seeded from the setup
+   * choice. Kept beside the policy file rather than in the row, so seeding is
+   * one-shot without a schema change; a line missing from here is seeded on the
+   * next event and never touched again.
+   */
+  function readStampedLines(): Set<string> {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(stampPath, 'utf8')) as { platformIds?: unknown };
+      return new Set(
+        Array.isArray(parsed.platformIds) ? parsed.platformIds.filter((v): v is string => typeof v === 'string') : [],
+      );
+    } catch {
+      return new Set();
+    }
+  }
+
+  function writeStampedLines(lines: Set<string>): void {
+    try {
+      fs.mkdirSync(path.dirname(stampPath), { recursive: true });
+      const tmp = `${stampPath}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ platformIds: [...lines] }, null, 2));
+      fs.renameSync(tmp, stampPath);
+    } catch (err) {
+      log.warn('Dial: could not record the seeded line — its policy may be re-seeded', { stampPath, err });
     }
   }
 
@@ -489,8 +531,14 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
       try {
         return await sendSms(recipient, text, platformId);
       } catch (err) {
+        // Rethrow. The delivery layer reads any returned value, `undefined`
+        // included, as a delivered message: it marks the row delivered and
+        // clears the outbox. Only a thrown error reaches the bounded retry in
+        // deliverSessionMessages. Long bodies are chunked, so a failure after
+        // the first chunk means a retry resends the chunks that did land; a
+        // duplicate SMS is the better trade against a message lost with no trace.
         log.error('Dial: sendMessage failed', { recipient, err });
-        return undefined;
+        throw err;
       }
     },
   };
